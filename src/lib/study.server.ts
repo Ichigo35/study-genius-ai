@@ -84,7 +84,7 @@ export function parseYouTubeUrl(url: string): string | null {
     if (host.endsWith("youtube.com")) {
       if (u.searchParams.get("v")) return u.searchParams.get("v");
       const m = u.pathname.match(/\/(shorts|embed|live)\/([\w-]+)/);
-      if (m) return m[2];
+      if (m) return m[2] ?? null;
     }
     return null;
   } catch {
