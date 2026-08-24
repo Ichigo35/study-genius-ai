@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
+import { Route as AuthenticatedProfileRouteImport } from './routes/_authenticated/profile'
+import { Route as AuthenticatedReviewRouteImport } from './routes/_authenticated/review'
 import { Route as AuthenticatedAddIndexRouteImport } from './routes/_authenticated/add.index'
 import { Route as AuthenticatedAddAudioRouteImport } from './routes/_authenticated/add.audio'
 import { Route as AuthenticatedAddDocumentRouteImport } from './routes/_authenticated/add.document'
@@ -20,7 +22,10 @@ import { Route as AuthenticatedAddRecordRouteImport } from './routes/_authentica
 import { Route as AuthenticatedAddScanRouteImport } from './routes/_authenticated/add.scan'
 import { Route as AuthenticatedAddTextRouteImport } from './routes/_authenticated/add.text'
 import { Route as AuthenticatedAddYoutubeRouteImport } from './routes/_authenticated/add.youtube'
+import { Route as AuthenticatedQuizzesQuizIdRouteImport } from './routes/_authenticated/quizzes.$quizId'
+import { Route as AuthenticatedSourcesSourceIdRouteImport } from './routes/_authenticated/sources.$sourceId'
 import { Route as AuthenticatedSpacesIndexRouteImport } from './routes/_authenticated/spaces.index'
+import { Route as AuthenticatedSpacesSpaceIdRouteImport } from './routes/_authenticated/spaces.$spaceId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -39,6 +44,16 @@ const AuthRoute = AuthRouteImport.update({
 const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
   id: '/home',
   path: '/home',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedProfileRoute = AuthenticatedProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedReviewRoute = AuthenticatedReviewRouteImport.update({
+  id: '/review',
+  path: '/review',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedAddIndexRoute = AuthenticatedAddIndexRouteImport.update({
@@ -77,10 +92,28 @@ const AuthenticatedAddYoutubeRoute = AuthenticatedAddYoutubeRouteImport.update({
   path: '/add/youtube',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedQuizzesQuizIdRoute =
+  AuthenticatedQuizzesQuizIdRouteImport.update({
+    id: '/quizzes/$quizId',
+    path: '/quizzes/$quizId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSourcesSourceIdRoute =
+  AuthenticatedSourcesSourceIdRouteImport.update({
+    id: '/sources/$sourceId',
+    path: '/sources/$sourceId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSpacesIndexRoute =
   AuthenticatedSpacesIndexRouteImport.update({
     id: '/spaces/',
     path: '/spaces/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSpacesSpaceIdRoute =
+  AuthenticatedSpacesSpaceIdRouteImport.update({
+    id: '/spaces/$spaceId',
+    path: '/spaces/$spaceId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 
@@ -88,12 +121,17 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/profile': typeof AuthenticatedProfileRoute
+  '/review': typeof AuthenticatedReviewRoute
   '/add/audio': typeof AuthenticatedAddAudioRoute
   '/add/document': typeof AuthenticatedAddDocumentRoute
   '/add/record': typeof AuthenticatedAddRecordRoute
   '/add/scan': typeof AuthenticatedAddScanRoute
   '/add/text': typeof AuthenticatedAddTextRoute
   '/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/quizzes/$quizId': typeof AuthenticatedQuizzesQuizIdRoute
+  '/sources/$sourceId': typeof AuthenticatedSourcesSourceIdRoute
+  '/spaces/$spaceId': typeof AuthenticatedSpacesSpaceIdRoute
   '/add/': typeof AuthenticatedAddIndexRoute
   '/spaces/': typeof AuthenticatedSpacesIndexRoute
 }
@@ -101,12 +139,17 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/profile': typeof AuthenticatedProfileRoute
+  '/review': typeof AuthenticatedReviewRoute
   '/add/audio': typeof AuthenticatedAddAudioRoute
   '/add/document': typeof AuthenticatedAddDocumentRoute
   '/add/record': typeof AuthenticatedAddRecordRoute
   '/add/scan': typeof AuthenticatedAddScanRoute
   '/add/text': typeof AuthenticatedAddTextRoute
   '/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/quizzes/$quizId': typeof AuthenticatedQuizzesQuizIdRoute
+  '/sources/$sourceId': typeof AuthenticatedSourcesSourceIdRoute
+  '/spaces/$spaceId': typeof AuthenticatedSpacesSpaceIdRoute
   '/add': typeof AuthenticatedAddIndexRoute
   '/spaces': typeof AuthenticatedSpacesIndexRoute
 }
@@ -116,12 +159,17 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/home': typeof AuthenticatedHomeRoute
+  '/_authenticated/profile': typeof AuthenticatedProfileRoute
+  '/_authenticated/review': typeof AuthenticatedReviewRoute
   '/_authenticated/add/audio': typeof AuthenticatedAddAudioRoute
   '/_authenticated/add/document': typeof AuthenticatedAddDocumentRoute
   '/_authenticated/add/record': typeof AuthenticatedAddRecordRoute
   '/_authenticated/add/scan': typeof AuthenticatedAddScanRoute
   '/_authenticated/add/text': typeof AuthenticatedAddTextRoute
   '/_authenticated/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/_authenticated/quizzes/$quizId': typeof AuthenticatedQuizzesQuizIdRoute
+  '/_authenticated/sources/$sourceId': typeof AuthenticatedSourcesSourceIdRoute
+  '/_authenticated/spaces/$spaceId': typeof AuthenticatedSpacesSpaceIdRoute
   '/_authenticated/add/': typeof AuthenticatedAddIndexRoute
   '/_authenticated/spaces/': typeof AuthenticatedSpacesIndexRoute
 }
@@ -131,12 +179,17 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/home'
+    | '/profile'
+    | '/review'
     | '/add/audio'
     | '/add/document'
     | '/add/record'
     | '/add/scan'
     | '/add/text'
     | '/add/youtube'
+    | '/quizzes/$quizId'
+    | '/sources/$sourceId'
+    | '/spaces/$spaceId'
     | '/add/'
     | '/spaces/'
   fileRoutesByTo: FileRoutesByTo
@@ -144,12 +197,17 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/home'
+    | '/profile'
+    | '/review'
     | '/add/audio'
     | '/add/document'
     | '/add/record'
     | '/add/scan'
     | '/add/text'
     | '/add/youtube'
+    | '/quizzes/$quizId'
+    | '/sources/$sourceId'
+    | '/spaces/$spaceId'
     | '/add'
     | '/spaces'
   id:
@@ -158,12 +216,17 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/home'
+    | '/_authenticated/profile'
+    | '/_authenticated/review'
     | '/_authenticated/add/audio'
     | '/_authenticated/add/document'
     | '/_authenticated/add/record'
     | '/_authenticated/add/scan'
     | '/_authenticated/add/text'
     | '/_authenticated/add/youtube'
+    | '/_authenticated/quizzes/$quizId'
+    | '/_authenticated/sources/$sourceId'
+    | '/_authenticated/spaces/$spaceId'
     | '/_authenticated/add/'
     | '/_authenticated/spaces/'
   fileRoutesById: FileRoutesById
@@ -202,6 +265,20 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home'
       preLoaderRoute: typeof AuthenticatedHomeRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/profile': {
+      id: '/_authenticated/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AuthenticatedProfileRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/review': {
+      id: '/_authenticated/review'
+      path: '/review'
+      fullPath: '/review'
+      preLoaderRoute: typeof AuthenticatedReviewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/add/': {
@@ -253,6 +330,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAddYoutubeRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/quizzes/$quizId': {
+      id: '/_authenticated/quizzes/$quizId'
+      path: '/quizzes/$quizId'
+      fullPath: '/quizzes/$quizId'
+      preLoaderRoute: typeof AuthenticatedQuizzesQuizIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/sources/$sourceId': {
+      id: '/_authenticated/sources/$sourceId'
+      path: '/sources/$sourceId'
+      fullPath: '/sources/$sourceId'
+      preLoaderRoute: typeof AuthenticatedSourcesSourceIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/spaces/': {
       id: '/_authenticated/spaces/'
       path: '/spaces'
@@ -260,29 +351,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSpacesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/spaces/$spaceId': {
+      id: '/_authenticated/spaces/$spaceId'
+      path: '/spaces/$spaceId'
+      fullPath: '/spaces/$spaceId'
+      preLoaderRoute: typeof AuthenticatedSpacesSpaceIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
+  AuthenticatedProfileRoute: typeof AuthenticatedProfileRoute
+  AuthenticatedReviewRoute: typeof AuthenticatedReviewRoute
   AuthenticatedAddAudioRoute: typeof AuthenticatedAddAudioRoute
   AuthenticatedAddDocumentRoute: typeof AuthenticatedAddDocumentRoute
   AuthenticatedAddRecordRoute: typeof AuthenticatedAddRecordRoute
   AuthenticatedAddScanRoute: typeof AuthenticatedAddScanRoute
   AuthenticatedAddTextRoute: typeof AuthenticatedAddTextRoute
   AuthenticatedAddYoutubeRoute: typeof AuthenticatedAddYoutubeRoute
+  AuthenticatedQuizzesQuizIdRoute: typeof AuthenticatedQuizzesQuizIdRoute
+  AuthenticatedSourcesSourceIdRoute: typeof AuthenticatedSourcesSourceIdRoute
+  AuthenticatedSpacesSpaceIdRoute: typeof AuthenticatedSpacesSpaceIdRoute
   AuthenticatedAddIndexRoute: typeof AuthenticatedAddIndexRoute
   AuthenticatedSpacesIndexRoute: typeof AuthenticatedSpacesIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedHomeRoute: AuthenticatedHomeRoute,
+  AuthenticatedProfileRoute: AuthenticatedProfileRoute,
+  AuthenticatedReviewRoute: AuthenticatedReviewRoute,
   AuthenticatedAddAudioRoute: AuthenticatedAddAudioRoute,
   AuthenticatedAddDocumentRoute: AuthenticatedAddDocumentRoute,
   AuthenticatedAddRecordRoute: AuthenticatedAddRecordRoute,
   AuthenticatedAddScanRoute: AuthenticatedAddScanRoute,
   AuthenticatedAddTextRoute: AuthenticatedAddTextRoute,
   AuthenticatedAddYoutubeRoute: AuthenticatedAddYoutubeRoute,
+  AuthenticatedQuizzesQuizIdRoute: AuthenticatedQuizzesQuizIdRoute,
+  AuthenticatedSourcesSourceIdRoute: AuthenticatedSourcesSourceIdRoute,
+  AuthenticatedSpacesSpaceIdRoute: AuthenticatedSpacesSpaceIdRoute,
   AuthenticatedAddIndexRoute: AuthenticatedAddIndexRoute,
   AuthenticatedSpacesIndexRoute: AuthenticatedSpacesIndexRoute,
 }
