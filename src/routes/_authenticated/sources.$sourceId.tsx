@@ -31,12 +31,12 @@ async function fetchSource(sourceId: string) {
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    supabase.from("transcripts").select("content").eq("source_id", sourceId).maybeSingle(),
+    supabase.from("transcripts").select("full_text").eq("source_id", sourceId).maybeSingle(),
   ]);
   return {
     source: source.data,
     note: note.data,
-    transcript: transcript.data?.content ?? "",
+    transcript: transcript.data?.full_text ?? "",
   };
 }
 
@@ -55,7 +55,7 @@ function SourcePage() {
   const data = query.data;
   const note = data?.note?.content as NoteContent | undefined;
   const lines = data?.transcript
-    ? data.transcript.split(/\n+/).filter((l) => l.toLowerCase().includes(search.toLowerCase()))
+    ? data.transcript.split(/\n+/).filter((l: string) => l.toLowerCase().includes(search.toLowerCase()))
     : [];
 
   return (
@@ -130,7 +130,7 @@ function SourcePage() {
               />
             </div>
             <div className="card-soft space-y-2 p-4 text-[0.95rem] leading-relaxed">
-              {lines.map((line, i) => (
+              {lines.map((line: string, i: number) => (
                 <p key={i}>{line}</p>
               ))}
             </div>
