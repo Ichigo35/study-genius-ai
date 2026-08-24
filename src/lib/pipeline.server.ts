@@ -163,7 +163,7 @@ export async function runMediaAnalysis(
     kind: "audio" | "recording" | "image";
     mimeType: string;
     base64: string;
-    durationSeconds?: number;
+    durationSeconds?: number | undefined;
     detailLevel: DetailLevel;
     outputLanguage: string;
   },
