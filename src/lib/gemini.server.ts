@@ -287,7 +287,7 @@ ${input.content}`,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
         {
-          text: `Read this picture of student notes / whiteboard / document. Extract all text, tables, diagrams, formulas and turn it into clean structured markdown notes. ${languageInstruction(input.outputLanguage)}`,
+          text: `Read this document or picture of student notes / whiteboard / slides. Extract all text, tables, diagrams, formulas and turn it into clean structured markdown notes. ${languageInstruction(input.outputLanguage)}`,
         },
       ],
     });

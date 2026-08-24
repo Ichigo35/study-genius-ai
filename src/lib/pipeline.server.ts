@@ -160,7 +160,7 @@ export async function runMediaAnalysis(
   data: {
     spaceId: string;
     title: string;
-    kind: "audio" | "recording" | "image";
+    kind: "audio" | "recording" | "image" | "pdf";
     mimeType: string;
     base64: string;
     durationSeconds?: number | undefined;
@@ -170,7 +170,8 @@ export async function runMediaAnalysis(
 ) {
   await assertQuota(supabase, userId, "analysis");
   const minutes = Math.max(1, Math.ceil((data.durationSeconds ?? 60) / 60));
-  if (data.kind !== "image") await assertQuota(supabase, userId, "audio_minutes", minutes);
+  const isDoc = data.kind === "image" || data.kind === "pdf";
+  if (!isDoc) await assertQuota(supabase, userId, "audio_minutes", minutes);
 
   const { data: source, error } = await supabase
     .from("sources")
@@ -180,7 +181,7 @@ export async function runMediaAnalysis(
       title: data.title,
       type: data.kind,
       status: "processing",
-      progress_step: data.kind === "image" ? "analyzing" : "transcribing",
+      progress_step: isDoc ? "analyzing" : "transcribing",
       duration_seconds: data.durationSeconds ?? null,
       detail_level: data.detailLevel,
     })
@@ -191,7 +192,7 @@ export async function runMediaAnalysis(
 
   try {
     const content =
-      data.kind === "image"
+      isDoc
         ? await geminiService.analyzeImage({
             base64: data.base64,
             mimeType: data.mimeType,
@@ -218,7 +219,7 @@ export async function runMediaAnalysis(
       .update({ status: "completed", progress_step: "done", title: notes.title || data.title })
       .eq("id", sourceId);
     await recordUsage(supabase, userId, "analysis");
-    if (data.kind !== "image") await recordUsage(supabase, userId, "audio_minutes", minutes);
+    if (!isDoc) await recordUsage(supabase, userId, "audio_minutes", minutes);
     await touchSpace(supabase, data.spaceId);
     return { ok: true as const, sourceId };
   } catch (e) {

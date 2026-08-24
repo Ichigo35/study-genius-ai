@@ -49,7 +49,7 @@ export const analyzeMedia = createServerFn({ method: "POST" })
       .object({
         spaceId: z.string().uuid(),
         title: z.string().min(1).max(200),
-        kind: z.enum(["audio", "recording", "image"]),
+        kind: z.enum(["audio", "recording", "image", "pdf"]),
         mimeType: z.string().min(3),
         base64: z.string().min(100),
         durationSeconds: z.number().int().min(0).max(36000).optional(),
