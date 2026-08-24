@@ -71,8 +71,7 @@ function SpacePage() {
 
   const askMutation = useMutation({
     mutationFn: async (q: string) => ask({ data: { spaceId, question: q, outputLanguage } }),
-    onSuccess: (result) => {
-      if (!result.ok) toast.error(result.error?.message ?? t("error.generic"));
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["space", spaceId] });
     },
     onError: () => toast.error(t("error.generic")),
@@ -80,20 +79,20 @@ function SpacePage() {
 
   const cardsMutation = useMutation({
     mutationFn: async () => genCards({ data: { spaceId, count: 15, outputLanguage } }),
-    onSuccess: (result) => {
-      if (!result.ok) return toast.error(result.error?.message ?? t("error.generic"));
+    onSuccess: () => {
       queryClient.invalidateQueries();
       navigate({ to: "/review" });
     },
+    onError: () => toast.error(t("error.generic")),
   });
 
   const quizMutation = useMutation({
     mutationFn: async () => genQuiz({ data: { spaceId, count: 10, outputLanguage } }),
     onSuccess: (result) => {
-      if (!result.ok || !result.quizId) return toast.error(result.error?.message ?? t("error.generic"));
       queryClient.invalidateQueries();
       navigate({ to: "/quizzes/$quizId", params: { quizId: result.quizId } });
     },
+    onError: () => toast.error(t("error.generic")),
   });
 
   const data = query.data;

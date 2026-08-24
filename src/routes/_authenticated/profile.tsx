@@ -50,7 +50,7 @@ function ProfilePage() {
             value={locale}
             onValueChange={(v) => {
               setLocale(v as typeof locale);
-              update({ ui_language: v });
+              update.mutate({ ui_language: v });
             }}
           >
             <SelectTrigger className="h-11 rounded-xl">
@@ -70,7 +70,7 @@ function ProfilePage() {
           <Label>{t("profile.aiLanguage")}</Label>
           <Select
             value={settings?.ai_output_language ?? "same"}
-            onValueChange={(v) => update({ ai_output_language: v })}
+            onValueChange={(v) => update.mutate({ ai_output_language: v })}
           >
             <SelectTrigger className="h-11 rounded-xl">
               <SelectValue />
@@ -88,7 +88,7 @@ function ProfilePage() {
 
         <div className="space-y-1.5">
           <Label>{t("profile.level")}</Label>
-          <Select value={settings?.study_level ?? "university"} onValueChange={(v) => update({ study_level: v })}>
+          <Select value={settings?.study_level ?? "university"} onValueChange={(v) => update.mutate({ study_level: v })}>
             <SelectTrigger className="h-11 rounded-xl">
               <SelectValue />
             </SelectTrigger>
@@ -104,7 +104,7 @@ function ProfilePage() {
 
         <div className="space-y-1.5">
           <Label>{t("profile.detail")}</Label>
-          <Select value={settings?.detail_level ?? "standard"} onValueChange={(v) => update({ detail_level: v })}>
+          <Select value={settings?.detail_level ?? "standard"} onValueChange={(v) => update.mutate({ detail_level: v })}>
             <SelectTrigger className="h-11 rounded-xl">
               <SelectValue />
             </SelectTrigger>
@@ -125,7 +125,7 @@ function ProfilePage() {
           <Switch
             id="notif"
             checked={settings?.notifications_enabled ?? true}
-            onCheckedChange={(v) => update({ notifications_enabled: v })}
+            onCheckedChange={(v) => update.mutate({ notifications_enabled: v })}
           />
         </div>
         <div className="flex items-center justify-between gap-4">
@@ -133,7 +133,7 @@ function ProfilePage() {
           <Switch
             id="del-audio"
             checked={settings?.delete_audio_after_transcription ?? true}
-            onCheckedChange={(v) => update({ delete_audio_after_transcription: v })}
+            onCheckedChange={(v) => update.mutate({ delete_audio_after_transcription: v })}
           />
         </div>
       </section>
