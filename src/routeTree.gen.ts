@@ -13,6 +13,9 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
+import { Route as AuthenticatedAddIndexRouteImport } from './routes/_authenticated/add.index'
+import { Route as AuthenticatedAddTextRouteImport } from './routes/_authenticated/add.text'
+import { Route as AuthenticatedAddYoutubeRouteImport } from './routes/_authenticated/add.youtube'
 import { Route as AuthenticatedSpacesIndexRouteImport } from './routes/_authenticated/spaces.index'
 
 const IndexRoute = IndexRouteImport.update({
@@ -34,6 +37,21 @@ const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
   path: '/home',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedAddIndexRoute = AuthenticatedAddIndexRouteImport.update({
+  id: '/add/',
+  path: '/add/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAddTextRoute = AuthenticatedAddTextRouteImport.update({
+  id: '/add/text',
+  path: '/add/text',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAddYoutubeRoute = AuthenticatedAddYoutubeRouteImport.update({
+  id: '/add/youtube',
+  path: '/add/youtube',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedSpacesIndexRoute =
   AuthenticatedSpacesIndexRouteImport.update({
     id: '/spaces/',
@@ -45,12 +63,18 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/add/text': typeof AuthenticatedAddTextRoute
+  '/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/add/': typeof AuthenticatedAddIndexRoute
   '/spaces/': typeof AuthenticatedSpacesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/home': typeof AuthenticatedHomeRoute
+  '/add/text': typeof AuthenticatedAddTextRoute
+  '/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/add': typeof AuthenticatedAddIndexRoute
   '/spaces': typeof AuthenticatedSpacesIndexRoute
 }
 export interface FileRoutesById {
@@ -59,19 +83,33 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/home': typeof AuthenticatedHomeRoute
+  '/_authenticated/add/text': typeof AuthenticatedAddTextRoute
+  '/_authenticated/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/_authenticated/add/': typeof AuthenticatedAddIndexRoute
   '/_authenticated/spaces/': typeof AuthenticatedSpacesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/home' | '/spaces/'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/home'
+    | '/add/text'
+    | '/add/youtube'
+    | '/add/'
+    | '/spaces/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/home' | '/spaces'
+  to:
+    '/' | '/auth' | '/home' | '/add/text' | '/add/youtube' | '/add' | '/spaces'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/home'
+    | '/_authenticated/add/text'
+    | '/_authenticated/add/youtube'
+    | '/_authenticated/add/'
     | '/_authenticated/spaces/'
   fileRoutesById: FileRoutesById
 }
@@ -111,6 +149,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedHomeRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/add/': {
+      id: '/_authenticated/add/'
+      path: '/add'
+      fullPath: '/add/'
+      preLoaderRoute: typeof AuthenticatedAddIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/add/text': {
+      id: '/_authenticated/add/text'
+      path: '/add/text'
+      fullPath: '/add/text'
+      preLoaderRoute: typeof AuthenticatedAddTextRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/add/youtube': {
+      id: '/_authenticated/add/youtube'
+      path: '/add/youtube'
+      fullPath: '/add/youtube'
+      preLoaderRoute: typeof AuthenticatedAddYoutubeRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/spaces/': {
       id: '/_authenticated/spaces/'
       path: '/spaces'
@@ -123,11 +182,17 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedHomeRoute: typeof AuthenticatedHomeRoute
+  AuthenticatedAddTextRoute: typeof AuthenticatedAddTextRoute
+  AuthenticatedAddYoutubeRoute: typeof AuthenticatedAddYoutubeRoute
+  AuthenticatedAddIndexRoute: typeof AuthenticatedAddIndexRoute
   AuthenticatedSpacesIndexRoute: typeof AuthenticatedSpacesIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedHomeRoute: AuthenticatedHomeRoute,
+  AuthenticatedAddTextRoute: AuthenticatedAddTextRoute,
+  AuthenticatedAddYoutubeRoute: AuthenticatedAddYoutubeRoute,
+  AuthenticatedAddIndexRoute: AuthenticatedAddIndexRoute,
   AuthenticatedSpacesIndexRoute: AuthenticatedSpacesIndexRoute,
 }
 
