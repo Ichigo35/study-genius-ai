@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
+import { signInWithGoogle } from "@/lib/googleAuth";
 import { useAuth } from "@/hooks/useAuth";
 import { useI18n, LOCALES, LOCALE_LABELS, LOCALE_FLAGS, type Locale } from "@/i18n";
 import { Button } from "@/components/ui/button";
@@ -61,13 +61,16 @@ function AuthPage() {
   }
 
   async function google() {
-    const result = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
-    if (result.error) {
+    setBusy(true);
+    const { error } = await signInWithGoogle();
+    setBusy(false);
+    if (error) {
       toast.error(t("error.generic"));
       return;
     }
-    if (result.redirected) return;
-    navigate({ to: "/home", replace: true });
+    // Web : signInWithOAuth redirige la page elle-même.
+    // Natif : le retour arrive via le deep link écouté dans __root.tsx,
+    // qui met à jour la session -> le useEffect ci-dessus navigue vers /home.
   }
 
   return (

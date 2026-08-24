@@ -52,6 +52,9 @@ function createSupabaseClient() {
       storage: brokeredPreviewStorage(),
       persistSession: true,
       autoRefreshToken: true,
+      // pkce: nécessaire pour échanger le code retourné par le deep link
+      // natif Android (src/lib/googleAuth.ts) contre une session.
+      flowType: 'pkce',
     }
   });
 }

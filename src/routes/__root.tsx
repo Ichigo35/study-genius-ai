@@ -8,9 +8,11 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
+import { toast } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { initNativeGoogleAuthListener } from "@/lib/googleAuth";
 import { I18nProvider } from "@/i18n";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -130,6 +132,11 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    const remove = initNativeGoogleAuthListener((error) => toast.error(error.message));
+    return remove;
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

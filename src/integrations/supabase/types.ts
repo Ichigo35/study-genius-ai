@@ -10,10 +10,121 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
+      analysis: {
+        Row: {
+          analyzed_at: string
+          bedrooms: number | null
+          budget_amount: number | null
+          budget_currency: string | null
+          city: string | null
+          classification: Database["public"]["Enums"]["lead_classification"]
+          email: string | null
+          housing_type: Database["public"]["Enums"]["housing_type"]
+          id: string
+          language_code: string | null
+          model_used: string
+          neighborhood: string | null
+          phone: string | null
+          post_id: string
+          reasoning: string | null
+          rental_duration: Database["public"]["Enums"]["rental_duration"]
+          score: number
+          summary_fr: string
+          whatsapp: string | null
+        }
+        Insert: {
+          analyzed_at?: string
+          bedrooms?: number | null
+          budget_amount?: number | null
+          budget_currency?: string | null
+          city?: string | null
+          classification: Database["public"]["Enums"]["lead_classification"]
+          email?: string | null
+          housing_type?: Database["public"]["Enums"]["housing_type"]
+          id?: string
+          language_code?: string | null
+          model_used?: string
+          neighborhood?: string | null
+          phone?: string | null
+          post_id: string
+          reasoning?: string | null
+          rental_duration?: Database["public"]["Enums"]["rental_duration"]
+          score: number
+          summary_fr: string
+          whatsapp?: string | null
+        }
+        Update: {
+          analyzed_at?: string
+          bedrooms?: number | null
+          budget_amount?: number | null
+          budget_currency?: string | null
+          city?: string | null
+          classification?: Database["public"]["Enums"]["lead_classification"]
+          email?: string | null
+          housing_type?: Database["public"]["Enums"]["housing_type"]
+          id?: string
+          language_code?: string | null
+          model_used?: string
+          neighborhood?: string | null
+          phone?: string | null
+          post_id?: string
+          reasoning?: string | null
+          rental_duration?: Database["public"]["Enums"]["rental_duration"]
+          score?: number
+          summary_fr?: string
+          whatsapp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analysis_language_code_fkey"
+            columns: ["language_code"]
+            isOneToOne: false
+            referencedRelation: "languages"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "analysis_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: true
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      app_profile: {
+        Row: {
+          created_at: string
+          display_name: string
+          email: string | null
+          id: string
+          phone: string | null
+          updated_at: string
+          whatsapp: string | null
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string
+          email?: string | null
+          id?: string
+          phone?: string | null
+          updated_at?: string
+          whatsapp?: string | null
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          email?: string | null
+          id?: string
+          phone?: string | null
+          updated_at?: string
+          whatsapp?: string | null
+        }
+        Relationships: []
+      }
       chat_messages: {
         Row: {
           content: string
@@ -45,6 +156,35 @@ export type Database = {
             columns: ["space_id"]
             isOneToOne: false
             referencedRelation: "study_spaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      favorites: {
+        Row: {
+          created_at: string
+          id: string
+          note: string | null
+          post_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          note?: string | null
+          post_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          note?: string | null
+          post_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "favorites_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: true
+            referencedRelation: "posts"
             referencedColumns: ["id"]
           },
         ]
@@ -112,6 +252,304 @@ export type Database = {
           },
         ]
       }
+      groups: {
+        Row: {
+          facebook_group_id: string | null
+          first_seen_at: string
+          id: string
+          input_url: string | null
+          last_seen_at: string
+          leads_count: number
+          posts_count: number
+          title: string
+        }
+        Insert: {
+          facebook_group_id?: string | null
+          first_seen_at?: string
+          id?: string
+          input_url?: string | null
+          last_seen_at?: string
+          leads_count?: number
+          posts_count?: number
+          title: string
+        }
+        Update: {
+          facebook_group_id?: string | null
+          first_seen_at?: string
+          id?: string
+          input_url?: string | null
+          last_seen_at?: string
+          leads_count?: number
+          posts_count?: number
+          title?: string
+        }
+        Relationships: []
+      }
+      languages: {
+        Row: {
+          code: string
+          flag_emoji: string | null
+          label_fr: string
+        }
+        Insert: {
+          code: string
+          flag_emoji?: string | null
+          label_fr: string
+        }
+        Update: {
+          code?: string
+          flag_emoji?: string | null
+          label_fr?: string
+        }
+        Relationships: []
+      }
+      lead_scores: {
+        Row: {
+          classification: Database["public"]["Enums"]["lead_classification"]
+          id: string
+          model_used: string
+          post_id: string
+          score: number
+          scored_at: string
+        }
+        Insert: {
+          classification: Database["public"]["Enums"]["lead_classification"]
+          id?: string
+          model_used: string
+          post_id: string
+          score: number
+          scored_at?: string
+        }
+        Update: {
+          classification?: Database["public"]["Enums"]["lead_classification"]
+          id?: string
+          model_used?: string
+          post_id?: string
+          score?: number
+          scored_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lead_scores_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      logs: {
+        Row: {
+          context: Json | null
+          created_at: string
+          id: string
+          level: Database["public"]["Enums"]["log_level"]
+          message: string
+        }
+        Insert: {
+          context?: Json | null
+          created_at?: string
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message: string
+        }
+        Update: {
+          context?: Json | null
+          created_at?: string
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message?: string
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          is_read: boolean
+          post_id: string | null
+          title: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          post_id?: string | null
+          title: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          post_id?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_status_history: {
+        Row: {
+          changed_at: string
+          id: string
+          note: string | null
+          post_id: string
+          status: Database["public"]["Enums"]["lead_pipeline_status"]
+        }
+        Insert: {
+          changed_at?: string
+          id?: string
+          note?: string | null
+          post_id: string
+          status: Database["public"]["Enums"]["lead_pipeline_status"]
+        }
+        Update: {
+          changed_at?: string
+          id?: string
+          note?: string | null
+          post_id?: string
+          status?: Database["public"]["Enums"]["lead_pipeline_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_status_history_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      posts: {
+        Row: {
+          author_facebook_id: string | null
+          author_name: string | null
+          author_profile_pic: string | null
+          comments_count: number
+          created_at: string
+          deleted_at: string | null
+          duplicate_reason: string | null
+          external_post_id: string
+          facebook_url: string
+          group_id: string | null
+          id: string
+          is_shared_post: boolean
+          pipeline_status: Database["public"]["Enums"]["lead_pipeline_status"]
+          pipeline_status_updated_at: string
+          possible_duplicate_of: string | null
+          posted_at: string | null
+          raw: Json
+          reactions_count: number
+          shared_from_page: string | null
+          shares_count: number
+          text: string
+          upload_id: string | null
+        }
+        Insert: {
+          author_facebook_id?: string | null
+          author_name?: string | null
+          author_profile_pic?: string | null
+          comments_count?: number
+          created_at?: string
+          deleted_at?: string | null
+          duplicate_reason?: string | null
+          external_post_id: string
+          facebook_url: string
+          group_id?: string | null
+          id?: string
+          is_shared_post?: boolean
+          pipeline_status?: Database["public"]["Enums"]["lead_pipeline_status"]
+          pipeline_status_updated_at?: string
+          possible_duplicate_of?: string | null
+          posted_at?: string | null
+          raw: Json
+          reactions_count?: number
+          shared_from_page?: string | null
+          shares_count?: number
+          text: string
+          upload_id?: string | null
+        }
+        Update: {
+          author_facebook_id?: string | null
+          author_name?: string | null
+          author_profile_pic?: string | null
+          comments_count?: number
+          created_at?: string
+          deleted_at?: string | null
+          duplicate_reason?: string | null
+          external_post_id?: string
+          facebook_url?: string
+          group_id?: string | null
+          id?: string
+          is_shared_post?: boolean
+          pipeline_status?: Database["public"]["Enums"]["lead_pipeline_status"]
+          pipeline_status_updated_at?: string
+          possible_duplicate_of?: string | null
+          posted_at?: string | null
+          raw?: Json
+          reactions_count?: number
+          shared_from_page?: string | null
+          shares_count?: number
+          text?: string
+          upload_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posts_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posts_possible_duplicate_of_fkey"
+            columns: ["possible_duplicate_of"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posts_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prices: {
+        Row: {
+          id: number
+          price: number | null
+          product_id: number
+          "store-id": string | null
+          "update-at": string | null
+        }
+        Insert: {
+          id?: number
+          price?: number | null
+          product_id: number
+          "store-id"?: string | null
+          "update-at"?: string | null
+        }
+        Update: {
+          id?: number
+          price?: number | null
+          product_id?: number
+          "store-id"?: string | null
+          "update-at"?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -138,6 +576,114 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      properties: {
+        Row: {
+          address: string | null
+          bathrooms: number | null
+          bedrooms: number | null
+          city: string
+          created_at: string
+          currency: string
+          description: string | null
+          housing_type: Database["public"]["Enums"]["housing_type"]
+          id: string
+          is_active: boolean
+          is_furnished: boolean | null
+          neighborhood: string | null
+          photo_url: string | null
+          price_per_month: number
+          reference: string | null
+          source: string
+          source_url: string | null
+          surface_sqm: number | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          bathrooms?: number | null
+          bedrooms?: number | null
+          city: string
+          created_at?: string
+          currency?: string
+          description?: string | null
+          housing_type?: Database["public"]["Enums"]["housing_type"]
+          id?: string
+          is_active?: boolean
+          is_furnished?: boolean | null
+          neighborhood?: string | null
+          photo_url?: string | null
+          price_per_month: number
+          reference?: string | null
+          source?: string
+          source_url?: string | null
+          surface_sqm?: number | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          bathrooms?: number | null
+          bedrooms?: number | null
+          city?: string
+          created_at?: string
+          currency?: string
+          description?: string | null
+          housing_type?: Database["public"]["Enums"]["housing_type"]
+          id?: string
+          is_active?: boolean
+          is_furnished?: boolean | null
+          neighborhood?: string | null
+          photo_url?: string | null
+          price_per_month?: number
+          reference?: string | null
+          source?: string
+          source_url?: string | null
+          surface_sqm?: number | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      property_matches: {
+        Row: {
+          created_at: string
+          id: string
+          match_score: number
+          post_id: string
+          property_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          match_score: number
+          post_id: string
+          property_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          match_score?: number
+          post_id?: string
+          property_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_matches_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_matches_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       quiz_attempts: {
         Row: {
@@ -266,6 +812,24 @@ export type Database = {
           },
         ]
       }
+      settings: {
+        Row: {
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
       sources: {
         Row: {
           created_at: string
@@ -330,6 +894,21 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      store: {
+        Row: {
+          id: number
+          name: string
+        }
+        Insert: {
+          id?: number
+          name: string
+        }
+        Update: {
+          id?: number
+          name?: string
+        }
+        Relationships: []
       }
       study_notes: {
         Row: {
@@ -494,6 +1073,51 @@ export type Database = {
           },
         ]
       }
+      uploads: {
+        Row: {
+          completed_at: string | null
+          entries_errors: number
+          entries_total: number
+          error_message: string | null
+          file_size_bytes: number | null
+          filename: string
+          id: string
+          posts_duplicates: number
+          posts_new: number
+          posts_raw: number
+          status: Database["public"]["Enums"]["upload_status"]
+          uploaded_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          entries_errors?: number
+          entries_total?: number
+          error_message?: string | null
+          file_size_bytes?: number | null
+          filename: string
+          id?: string
+          posts_duplicates?: number
+          posts_new?: number
+          posts_raw?: number
+          status?: Database["public"]["Enums"]["upload_status"]
+          uploaded_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          entries_errors?: number
+          entries_total?: number
+          error_message?: string | null
+          file_size_bytes?: number | null
+          filename?: string
+          id?: string
+          posts_duplicates?: number
+          posts_new?: number
+          posts_raw?: number
+          status?: Database["public"]["Enums"]["upload_status"]
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
       usage_events: {
         Row: {
           amount: number
@@ -592,10 +1216,42 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      find_similar_post: {
+        Args: { p_post_id: string; p_text: string; p_threshold?: number }
+        Returns: {
+          id: string
+          pipeline_status: Database["public"]["Enums"]["lead_pipeline_status"]
+          similarity: number
+        }[]
+      }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      [_ in never]: never
+      housing_type:
+        | "appartement"
+        | "maison"
+        | "studio"
+        | "condo"
+        | "villa"
+        | "chambre"
+        | "colocation"
+        | "maison_meublee"
+        | "maison_vide"
+        | "inconnu"
+      lead_classification: "lead" | "peut_etre_lead" | "pas_un_lead"
+      lead_pipeline_status:
+        | "nouveau_lead"
+        | "premier_contact_envoye"
+        | "reponse_recue"
+        | "qualifie"
+        | "visite_programmee"
+        | "negociation"
+        | "gagne_ferme"
+        | "perdu_ferme"
+      log_level: "debug" | "info" | "warning" | "error"
+      rental_duration: "courte_duree" | "longue_duree" | "inconnu"
+      upload_status: "pending" | "processing" | "completed" | "failed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -722,6 +1378,33 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      housing_type: [
+        "appartement",
+        "maison",
+        "studio",
+        "condo",
+        "villa",
+        "chambre",
+        "colocation",
+        "maison_meublee",
+        "maison_vide",
+        "inconnu",
+      ],
+      lead_classification: ["lead", "peut_etre_lead", "pas_un_lead"],
+      lead_pipeline_status: [
+        "nouveau_lead",
+        "premier_contact_envoye",
+        "reponse_recue",
+        "qualifie",
+        "visite_programmee",
+        "negociation",
+        "gagne_ferme",
+        "perdu_ferme",
+      ],
+      log_level: ["debug", "info", "warning", "error"],
+      rental_duration: ["courte_duree", "longue_duree", "inconnu"],
+      upload_status: ["pending", "processing", "completed", "failed"],
+    },
   },
 } as const

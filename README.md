@@ -1114,9 +1114,7 @@ Ne simule aucune fonctionnalité avec de fausses données lorsque la fonctionnal
 
 À la fin de chaque étape, vérifier que l'application fonctionne réellement avant de passer à la suivante.
 
-AQ.Ab8RN6IWuGdbG78i8Y80FE1ncYP6vUk1_4GWfYWd19dpAEsMdQ
-
-Voici la cle Gemini que tu dois integrer pour faire le travail IA. A aucun moment l'app doit utiliser les credits Lovable, c'est interdit, tout doit passer par cle API Gemini
+La clé Gemini est fournie comme secret côté serveur (`GEMINI_API_KEY`, jamais commitée). A aucun moment l'app doit utiliser les credits Lovable, c'est interdit, tout doit passer par la clé API Gemini.
 
 This project was built with [Lovable](https://lovable.dev).
 
