@@ -20,6 +20,7 @@ import { Route as AuthenticatedAddRecordRouteImport } from './routes/_authentica
 import { Route as AuthenticatedAddScanRouteImport } from './routes/_authenticated/add.scan'
 import { Route as AuthenticatedAddTextRouteImport } from './routes/_authenticated/add.text'
 import { Route as AuthenticatedAddYoutubeRouteImport } from './routes/_authenticated/add.youtube'
+import { Route as AuthenticatedSourcesSourceIdRouteImport } from './routes/_authenticated/sources.$sourceId'
 import { Route as AuthenticatedSpacesIndexRouteImport } from './routes/_authenticated/spaces.index'
 
 const IndexRoute = IndexRouteImport.update({
@@ -77,6 +78,12 @@ const AuthenticatedAddYoutubeRoute = AuthenticatedAddYoutubeRouteImport.update({
   path: '/add/youtube',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedSourcesSourceIdRoute =
+  AuthenticatedSourcesSourceIdRouteImport.update({
+    id: '/sources/$sourceId',
+    path: '/sources/$sourceId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSpacesIndexRoute =
   AuthenticatedSpacesIndexRouteImport.update({
     id: '/spaces/',
@@ -94,6 +101,7 @@ export interface FileRoutesByFullPath {
   '/add/scan': typeof AuthenticatedAddScanRoute
   '/add/text': typeof AuthenticatedAddTextRoute
   '/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/sources/$sourceId': typeof AuthenticatedSourcesSourceIdRoute
   '/add/': typeof AuthenticatedAddIndexRoute
   '/spaces/': typeof AuthenticatedSpacesIndexRoute
 }
@@ -107,6 +115,7 @@ export interface FileRoutesByTo {
   '/add/scan': typeof AuthenticatedAddScanRoute
   '/add/text': typeof AuthenticatedAddTextRoute
   '/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/sources/$sourceId': typeof AuthenticatedSourcesSourceIdRoute
   '/add': typeof AuthenticatedAddIndexRoute
   '/spaces': typeof AuthenticatedSpacesIndexRoute
 }
@@ -122,6 +131,7 @@ export interface FileRoutesById {
   '/_authenticated/add/scan': typeof AuthenticatedAddScanRoute
   '/_authenticated/add/text': typeof AuthenticatedAddTextRoute
   '/_authenticated/add/youtube': typeof AuthenticatedAddYoutubeRoute
+  '/_authenticated/sources/$sourceId': typeof AuthenticatedSourcesSourceIdRoute
   '/_authenticated/add/': typeof AuthenticatedAddIndexRoute
   '/_authenticated/spaces/': typeof AuthenticatedSpacesIndexRoute
 }
@@ -137,6 +147,7 @@ export interface FileRouteTypes {
     | '/add/scan'
     | '/add/text'
     | '/add/youtube'
+    | '/sources/$sourceId'
     | '/add/'
     | '/spaces/'
   fileRoutesByTo: FileRoutesByTo
@@ -150,6 +161,7 @@ export interface FileRouteTypes {
     | '/add/scan'
     | '/add/text'
     | '/add/youtube'
+    | '/sources/$sourceId'
     | '/add'
     | '/spaces'
   id:
@@ -164,6 +176,7 @@ export interface FileRouteTypes {
     | '/_authenticated/add/scan'
     | '/_authenticated/add/text'
     | '/_authenticated/add/youtube'
+    | '/_authenticated/sources/$sourceId'
     | '/_authenticated/add/'
     | '/_authenticated/spaces/'
   fileRoutesById: FileRoutesById
@@ -253,6 +266,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAddYoutubeRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/sources/$sourceId': {
+      id: '/_authenticated/sources/$sourceId'
+      path: '/sources/$sourceId'
+      fullPath: '/sources/$sourceId'
+      preLoaderRoute: typeof AuthenticatedSourcesSourceIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/spaces/': {
       id: '/_authenticated/spaces/'
       path: '/spaces'
@@ -271,6 +291,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAddScanRoute: typeof AuthenticatedAddScanRoute
   AuthenticatedAddTextRoute: typeof AuthenticatedAddTextRoute
   AuthenticatedAddYoutubeRoute: typeof AuthenticatedAddYoutubeRoute
+  AuthenticatedSourcesSourceIdRoute: typeof AuthenticatedSourcesSourceIdRoute
   AuthenticatedAddIndexRoute: typeof AuthenticatedAddIndexRoute
   AuthenticatedSpacesIndexRoute: typeof AuthenticatedSpacesIndexRoute
 }
@@ -283,6 +304,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAddScanRoute: AuthenticatedAddScanRoute,
   AuthenticatedAddTextRoute: AuthenticatedAddTextRoute,
   AuthenticatedAddYoutubeRoute: AuthenticatedAddYoutubeRoute,
+  AuthenticatedSourcesSourceIdRoute: AuthenticatedSourcesSourceIdRoute,
   AuthenticatedAddIndexRoute: AuthenticatedAddIndexRoute,
   AuthenticatedSpacesIndexRoute: AuthenticatedSpacesIndexRoute,
 }
