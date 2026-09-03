@@ -160,6 +160,25 @@ Ne s'applique pas aux simples questions ou explorations.
   code trims surrounding quotes/whitespace defensively.
 - Gemini 3.x models "think" by default — analyses can take 20–60s; that's
   normal, not a hang.
+- **The `AQ.…` key is on the FREE TIER** → `gemini-3.6-flash` is capped at
+  **20 requests/day**. One document analysis = 2+ calls, so the app runs dry
+  almost immediately (seen 2026-09-03: analyses failing with 429
+  RESOURCE_EXHAUSTED / 503 "high demand"). **Fix = enable billing on the key**
+  (aistudio.google.com/apikey → the project → Set up billing). Flash pricing
+  is cheap; no code change needed once billing is on. `gemini-2.5-flash` is
+  not an escape hatch — it 404s for this key ("no longer available to new
+  users").
+- Code now distinguishes a daily-cap 429 (`quota_free_tier`, no retry, clear
+  message) from a transient per-minute 429 (honors `retryDelay`).
+
+### Client analysis flow (`MediaAnalyzer.tsx`) — known weakness
+
+The progress screen steps (`upload → transcribe → analyze → notes → review`)
+are a **fake 9s ticker**, not real backend progress; the whole analysis is
+one long synchronous server fn call. Capped with a 180s client timeout so it
+can't spin forever, but the proper fix is to fire-and-navigate to
+`/sources/$sourceId` and poll `sources.status` / `progress_step` (already
+written by `pipeline.server.ts`).
 
 ## Browser automation
 
