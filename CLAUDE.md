@@ -41,9 +41,9 @@ a static export — a static build would break every Gemini-backed feature.
 - Cloudflare Bot Fight Mode (or similar) 403s requests without a real browser
   User-Agent — expected for `curl`/`urllib` smoke tests, not a bug.
 - Native Android Google Sign-In verified on-device 2026-09-03 (debug APK).
-- Redeployed 2026-09-03 (version `c2c9a5f8`) with the Gemini auth/model fix
-  (see "Gemini API" section). `GEMINI_API_KEY` secret rotated to the current
-  `AQ.…`-format key.
+- Redeployed 2026-09-03 with the Gemini auth/model fix + model fallback chain
+  (see "Gemini API" section); latest version `9575de0b`. `GEMINI_API_KEY`
+  secret rotated to the current `AQ.…`-format key.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
