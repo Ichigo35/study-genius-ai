@@ -141,6 +141,23 @@ puis mettre à jour ce `CLAUDE.md` (statut / section deployment) et la mémoire
 si un fait durable a changé. Autorisation durable de commit/push pour ce repo.
 Ne s'applique pas aux simples questions ou explorations.
 
+## Gemini API (`src/lib/gemini.server.ts`)
+
+- **Auth:** always send the key as the `x-goog-api-key` header. Do **not** use
+  `Authorization: Bearer` (that's for OAuth2 access tokens only) and don't
+  gate on the key prefix — Google now issues keys as `AQ.…` as well as the
+  older `AIza…`. Getting this wrong = 401 → "Clé Gemini invalide ou non
+  autorisée" in the app (this exact bug, fixed 2026-09-03).
+- **Model:** default `gemini-3.6-flash` (text + PDF/image/audio). Override
+  with `GEMINI_MODEL_TEXT` / `GEMINI_MODEL_MULTIMODAL` env vars.
+  `gemini-2.5-flash` returns 404 "no longer available to new users" for keys
+  created after ~2026.
+- The Worker secret `GEMINI_API_KEY` is set via
+  `wrangler secret put GEMINI_API_KEY --name ichigo35-study-genius-ai`. The
+  code trims surrounding quotes/whitespace defensively.
+- Gemini 3.x models "think" by default — analyses can take 20–60s; that's
+  normal, not a hang.
+
 ## Browser automation
 
 When a task needs to drive a browser (testing the deployed app, checking a

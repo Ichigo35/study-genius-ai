@@ -3,9 +3,11 @@
  * La clé n'est jamais exposée au client.
  */
 
+// gemini-2.5-flash is no longer available to new API keys; 3.6-flash is the
+// current recommended migration target (handles text + PDF/image/audio).
 const MODELS = {
-  text: process.env["GEMINI_MODEL_TEXT"] ?? "gemini-2.5-flash",
-  multimodal: process.env["GEMINI_MODEL_MULTIMODAL"] ?? "gemini-2.5-flash",
+  text: process.env["GEMINI_MODEL_TEXT"] ?? "gemini-3.6-flash",
+  multimodal: process.env["GEMINI_MODEL_MULTIMODAL"] ?? "gemini-3.6-flash",
 } as const;
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -44,8 +46,7 @@ async function callGemini(opts: {
 }): Promise<string> {
   const key = apiKey();
   const model = opts.model ?? MODELS.text;
-  const useQueryKey = key.startsWith("AIza");
-  const url = `${BASE}/models/${model}:generateContent${useQueryKey ? `?key=${key}` : ""}`;
+  const url = `${BASE}/models/${model}:generateContent`;
 
   const body: Record<string, unknown> = {
     contents: [{ role: "user", parts: opts.parts }],
@@ -68,7 +69,9 @@ async function callGemini(opts: {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(useQueryKey ? {} : { Authorization: `Bearer ${key}` }),
+          // Works for every API key format (AIza… and the newer AQ.… keys).
+          // `Authorization: Bearer` is only for OAuth2 access tokens, not API keys.
+          "x-goog-api-key": key,
         },
         body: JSON.stringify(body),
       });
