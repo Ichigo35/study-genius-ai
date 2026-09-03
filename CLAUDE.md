@@ -40,8 +40,23 @@ a static export — a static build would break every Gemini-backed feature.
   release, which needs a real release keystore + `assembleRelease`.
 - Cloudflare Bot Fight Mode (or similar) 403s requests without a real browser
   User-Agent — expected for `curl`/`urllib` smoke tests, not a bug.
-- Repo pushed to `main` at commit `c5d450d` (Capacitor Android + Cloudflare
-  deploy + Google Sign-In + backend migration).
+- Native Android Google Sign-In verified on-device 2026-09-03 (debug APK).
+
+### Known DB hardening TODO (from `get_advisors` security, 2026-09-03)
+
+- Several `public` tables have **RLS enabled but no policy** (deny-all):
+  check which belong to Study Genius AI vs the co-hosted real-estate app —
+  any of ours in that list means a broken/inaccessible feature. Candidates
+  seen: `analysis`, `app_profile`, `favorites`, `groups`, `notifications`,
+  `settings`, `store`, `uploads`.
+- `public.study_sessions` shows two policies with different naming styles
+  (`"own sessions"` + `study_sessions_owner`) — possible cross-app overlap,
+  verify before touching.
+- Auth: enable leaked-password protection (HaveIBeenPwned) in the dashboard.
+- Study Genius policies target `anon`/`public` role rather than
+  `authenticated` — tighten if anonymous sign-ins stay disabled.
+- The `function_search_path_mutable` / `pg_trgm-in-public` warnings are the
+  **other app's** objects — not ours, leave them.
 
 ### Backend: Supabase project `knqcmptpejylvlnhmssx` ("App Claude")
 
@@ -71,10 +86,10 @@ project id `knqcmptpejylvlnhmssx` ("App Claude", org `azekabhktswfmxkssqac`).
 
 ## Google Sign-In
 
-**Fully working end-to-end (verified 2026-08-24)** on web via Playwright:
-clicking "Continuer avec Google" reaches Google's real account picker with
-no `redirect_uri_mismatch`. Native Android flow is implemented but not yet
-manually verified on-device.
+**Fully working end-to-end** on web (verified 2026-08-24 via Playwright) **and
+on native Android** (verified on-device 2026-09-03 from the debug APK): the
+system-browser + `com.studygenius.ai://auth-callback` deep-link flow completes
+and creates a session.
 
 Implemented in `src/lib/googleAuth.ts`, replacing the old
 `@lovable.dev/cloud-auth-js`-based flow (removed from `auth.tsx`). Supabase
