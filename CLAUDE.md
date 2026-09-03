@@ -35,11 +35,46 @@ a static export — a static build would break every Gemini-backed feature.
 - Build a debug APK: `cd android && ./gradlew assembleDebug` (needs
   `ANDROID_HOME`/`ANDROID_SDK_ROOT` set — SDK lives at
   `~/Library/Android/sdk`). Output:
-  `android/app/build/outputs/apk/debug/app-debug.apk`.
+  `android/app/build/outputs/apk/debug/app-debug.apk`. It's a debug build
+  (debug-signed) — fine for sideloading/testing, not for a Play Store
+  release, which needs a real release keystore + `assembleRelease`.
 - Cloudflare Bot Fight Mode (or similar) 403s requests without a real browser
   User-Agent — expected for `curl`/`urllib` smoke tests, not a bug.
+- Repo pushed to `main` at commit `c5d450d` (Capacitor Android + Cloudflare
+  deploy + Google Sign-In + backend migration).
+
+### Backend: Supabase project `knqcmptpejylvlnhmssx` ("App Claude")
+
+This app originally ran on Lovable Cloud's managed Supabase
+(`yxhktlafavsgxtpucytn`), but that setup only exposes Google Sign-In through
+Lovable's own OAuth broker (`oauth.lovable.app`), which **only works for
+Lovable-hosted origins** — not a Capacitor app or an externally-deployed
+Cloudflare Worker. So the backend was migrated (2026-08-24) to a Supabase
+project the user owns directly, reachable via the `mcp__supabase__*` tools:
+project id `knqcmptpejylvlnhmssx` ("App Claude", org `azekabhktswfmxkssqac`).
+
+- That project **also hosts an unrelated existing app** (a real-estate
+  lead-scraping pipeline — tables like `posts`, `properties`, `leads_scores`,
+  `pipeline_status_history`, real production data). Study Genius AI's schema
+  was added alongside it with zero name collisions. Never touch those other
+  tables, and never change the project's `Site URL` in Auth settings (still
+  `http://localhost:3000`, used by that other app) — only the Redirect URLs
+  allowlist was extended for this app.
+- Schema applied via `mcp__supabase__apply_migration` using the SQL from
+  `supabase/migrations/*.sql` in this repo (kept as the source of truth for
+  the schema, even though `supabase db push` isn't the deploy path here).
+- `src/integrations/supabase/types.ts` was regenerated for this project via
+  `mcp__supabase__generate_typescript_types` — it now includes the other
+  app's tables too; that's expected, not a bug.
+- `.env` (`SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY`/`VITE_*` equivalents) and
+  the Cloudflare Worker secrets both point at this project now.
 
 ## Google Sign-In
+
+**Fully working end-to-end (verified 2026-08-24)** on web via Playwright:
+clicking "Continuer avec Google" reaches Google's real account picker with
+no `redirect_uri_mismatch`. Native Android flow is implemented but not yet
+manually verified on-device.
 
 Implemented in `src/lib/googleAuth.ts`, replacing the old
 `@lovable.dev/cloud-auth-js`-based flow (removed from `auth.tsx`). Supabase
@@ -51,16 +86,29 @@ client uses `flowType: 'pkce'` (`src/integrations/supabase/client.ts`).
   custom-scheme deep link `com.studygenius.ai://auth-callback`
   (`@capacitor/app`, intent-filter in `AndroidManifest.xml`), then exchanges
   the PKCE code for a session.
-- **Manual setup still required (needs the user's own accounts, not doable
-  from here):**
-  1. Google Cloud Console → OAuth consent screen + an OAuth 2.0 **Web
-     application** Client ID, with authorized redirect URI
-     `https://yxhktlafavsgxtpucytn.supabase.co/auth/v1/callback`.
-  2. Supabase Dashboard (this project is on Lovable Cloud, not in the
-     account reachable from here via MCP) → Authentication → Providers →
-     Google → enable, paste the Client ID + Client Secret.
-  3. No Android-specific client / SHA-1 fingerprint needed — the system
-     browser + deep link approach avoids that entirely.
+- Google Cloud Console OAuth client (Web application type, project owned by
+  the user): Client ID `851397414087-icnr220up3839i88hopsqg3658r77msd
+  .apps.googleusercontent.com`. Authorized redirect URI must point at
+  **this** Supabase project's callback:
+  `https://knqcmptpejylvlnhmssx.supabase.co/auth/v1/callback` — if the
+  Supabase project ever changes again, this is the #1 thing to update (we
+  hit a `redirect_uri_mismatch` once already from forgetting it after the
+  backend migration).
+- Supabase side (`knqcmptpejylvlnhmssx`, configured via the dashboard UI —
+  no MCP tool exposes Auth provider config): Google provider enabled with
+  that Client ID + its secret; Redirect URLs allowlist includes
+  `https://ichigo35-study-genius-ai.ichigo35.workers.dev/auth` and
+  `com.studygenius.ai://auth-callback`.
+- No Android-specific OAuth client / SHA-1 fingerprint needed — the system
+  browser + deep link approach avoids that entirely.
+
+## Workflow — commit automatique après chaque tâche de code
+
+Quand une tâche de code demandée par l'utilisateur est **terminée**, faire
+systématiquement et sans redemander : `git commit` + `git push` sur `main`,
+puis mettre à jour ce `CLAUDE.md` (statut / section deployment) et la mémoire
+si un fait durable a changé. Autorisation durable de commit/push pour ce repo.
+Ne s'applique pas aux simples questions ou explorations.
 
 ## Browser automation
 
