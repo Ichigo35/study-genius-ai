@@ -3,12 +3,25 @@
  * La clé n'est jamais exposée au client.
  */
 
-// gemini-2.5-flash is no longer available to new API keys; 3.6-flash is the
-// current recommended migration target (handles text + PDF/image/audio).
+// Model *fallback chains* (comma-separated env override). callGemini walks the
+// chain: if a model is rate-limited / out of daily free-tier quota / overloaded
+// / unavailable, it automatically retries the request on the next model.
+// Each model has its own separate free-tier daily quota (~20 req/day), so the
+// chain also stretches free-tier usage. gemini-2.5-flash (exact) is NOT usable
+// — it 404s "no longer available to new users" — but 2.5-flash-lite is.
+const DEFAULT_CHAIN = "gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite";
 const MODELS = {
-  text: process.env["GEMINI_MODEL_TEXT"] ?? "gemini-3.6-flash",
-  multimodal: process.env["GEMINI_MODEL_MULTIMODAL"] ?? "gemini-3.6-flash",
+  text: parseChain(process.env["GEMINI_MODEL_TEXT"]),
+  multimodal: parseChain(process.env["GEMINI_MODEL_MULTIMODAL"]),
 } as const;
+
+function parseChain(env: string | undefined): string[] {
+  const chain = (env ?? DEFAULT_CHAIN)
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return chain.length ? chain : DEFAULT_CHAIN.split(",");
+}
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -36,16 +49,51 @@ function apiKey() {
   return key;
 }
 
-async function callGemini(opts: {
-  model?: string;
+interface CallOpts {
+  /** Explicit model chain; defaults to MODELS.text. */
+  models?: string[];
   parts: Part[];
   system?: string;
   schema?: unknown;
   temperature?: number;
   retries?: number;
-}): Promise<string> {
+}
+
+// Errors that mean "this model won't work right now, try the next one".
+const FALLBACK_CODES = new Set([
+  "quota_free_tier",
+  "rate_limit",
+  "upstream",
+  "network",
+  "model_unavailable",
+]);
+
+/**
+ * Run the request against a chain of models, falling back on the next model
+ * whenever the current one is rate-limited / out of quota / overloaded /
+ * unavailable. Only throws once every model in the chain has failed.
+ */
+async function callGemini(opts: CallOpts): Promise<string> {
+  const chain = opts.models?.length ? opts.models : MODELS.text;
+  let lastError: GeminiError = new GeminiError("unknown", "Erreur inconnue du service AI.", 500);
+
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i]!;
+    try {
+      return await callModelOnce(model, opts);
+    } catch (e) {
+      const err = e instanceof GeminiError ? e : new GeminiError("unknown", String(e), 500);
+      // Keep the most actionable error to surface if the whole chain fails.
+      if (err.code === "quota_free_tier" || lastError.code !== "quota_free_tier") lastError = err;
+      if (!FALLBACK_CODES.has(err.code) || i === chain.length - 1) throw lastError;
+      console.error(`[gemini] "${model}" failed (${err.code}) → falling back to "${chain[i + 1]}"`);
+    }
+  }
+  throw lastError;
+}
+
+async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
   const key = apiKey();
-  const model = opts.model ?? MODELS.text;
   const url = `${BASE}/models/${model}:generateContent`;
 
   const body: Record<string, unknown> = {
@@ -119,6 +167,12 @@ async function callGemini(opts: {
     }
     if (res.status === 400 && /too large|exceeds|token/i.test(raw)) {
       throw new GeminiError("too_long", "Le contenu est trop volumineux pour être analysé.", 400);
+    }
+    // Model retired / not available for this key (e.g. gemini-2.5-flash
+    // "no longer available to new users") — let the chain try the next model.
+    if (res.status === 404) {
+      console.error(`[gemini] 404 model "${model}": ${raw.slice(0, 300)}`);
+      throw new GeminiError("model_unavailable", `Modèle Gemini "${model}" indisponible.`, 404);
     }
     // Google returns 400 API_KEY_INVALID for a malformed key, 403 for a disabled
     // API / key restriction. Log the upstream reason (never contains the key) so
@@ -292,7 +346,7 @@ ${input.content}`,
     outputLanguage: string;
   }): Promise<{ transcript: string; notes: StudyNoteContent }> {
     const transcript = await callGemini({
-      model: MODELS.multimodal,
+      models: MODELS.multimodal,
       parts: [
         { fileData: { fileUri: input.url } },
         {
@@ -311,7 +365,7 @@ ${input.content}`,
 
   async transcribeAudio(input: { base64: string; mimeType: string }): Promise<string> {
     return callGemini({
-      model: MODELS.multimodal,
+      models: MODELS.multimodal,
       temperature: 0.2,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
@@ -324,7 +378,7 @@ ${input.content}`,
 
   async analyzeImage(input: { base64: string; mimeType: string; outputLanguage: string }) {
     return callGemini({
-      model: MODELS.multimodal,
+      models: MODELS.multimodal,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
         {

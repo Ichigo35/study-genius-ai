@@ -151,25 +151,28 @@ Ne s'applique pas aux simples questions ou explorations.
   gate on the key prefix — Google now issues keys as `AQ.…` as well as the
   older `AIza…`. Getting this wrong = 401 → "Clé Gemini invalide ou non
   autorisée" in the app (this exact bug, fixed 2026-09-03).
-- **Model:** default `gemini-3.6-flash` (text + PDF/image/audio). Override
-  with `GEMINI_MODEL_TEXT` / `GEMINI_MODEL_MULTIMODAL` env vars.
-  `gemini-2.5-flash` returns 404 "no longer available to new users" for keys
-  created after ~2026.
+- **Model fallback chain.** `MODELS.text` / `MODELS.multimodal` are *lists*
+  (comma-separated `GEMINI_MODEL_TEXT` / `GEMINI_MODEL_MULTIMODAL` env
+  override; default `gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite`).
+  `callGemini` walks the chain: on 429 (quota/rate), 404 (model retired),
+  5xx (overload) or network error it automatically retries the same request
+  on the next model. Only 400/401/403 (bad request / auth) short-circuit.
+  Verified 2026-09-03: 3.6-flash out of daily quota → auto-fell back to
+  3.5-flash, analysis succeeded.
+- Each model has its **own** ~20 req/day free-tier quota, so the chain also
+  multiplies free-tier headroom. `gemini-2.5-flash` (exact) is unusable —
+  404 "no longer available to new users" — but `2.5-flash-lite`,
+  `3.5-flash`, `gemini-flash-latest`, `gemini-flash-lite-latest` all work.
 - The Worker secret `GEMINI_API_KEY` is set via
   `wrangler secret put GEMINI_API_KEY --name ichigo35-study-genius-ai`. The
   code trims surrounding quotes/whitespace defensively.
 - Gemini 3.x models "think" by default — analyses can take 20–60s; that's
   normal, not a hang.
-- **The `AQ.…` key is on the FREE TIER** → `gemini-3.6-flash` is capped at
-  **20 requests/day**. One document analysis = 2+ calls, so the app runs dry
-  almost immediately (seen 2026-09-03: analyses failing with 429
-  RESOURCE_EXHAUSTED / 503 "high demand"). **Fix = enable billing on the key**
-  (aistudio.google.com/apikey → the project → Set up billing). Flash pricing
-  is cheap; no code change needed once billing is on. `gemini-2.5-flash` is
-  not an escape hatch — it 404s for this key ("no longer available to new
-  users").
-- Code now distinguishes a daily-cap 429 (`quota_free_tier`, no retry, clear
-  message) from a transient per-minute 429 (honors `retryDelay`).
+- **The `AQ.…` key is on the FREE TIER.** The fallback chain keeps things
+  working, but for real usage **enable billing on the key**
+  (aistudio.google.com/apikey → the project → Set up billing) — flash pricing
+  is cheap. When every model in the chain is quota-capped, the app shows the
+  `quota_free_tier` message pointing there.
 
 ### Client analysis flow (`MediaAnalyzer.tsx`) — known weakness
 
