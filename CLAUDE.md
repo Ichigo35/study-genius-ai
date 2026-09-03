@@ -42,21 +42,37 @@ a static export — a static build would break every Gemini-backed feature.
   User-Agent — expected for `curl`/`urllib` smoke tests, not a bug.
 - Native Android Google Sign-In verified on-device 2026-09-03 (debug APK).
 
-### Known DB hardening TODO (from `get_advisors` security, 2026-09-03)
+### RLS audit result (2026-09-03) — Study Genius tables are clean
 
-- Several `public` tables have **RLS enabled but no policy** (deny-all):
-  check which belong to Study Genius AI vs the co-hosted real-estate app —
-  any of ours in that list means a broken/inaccessible feature. Candidates
-  seen: `analysis`, `app_profile`, `favorites`, `groups`, `notifications`,
-  `settings`, `store`, `uploads`.
-- `public.study_sessions` shows two policies with different naming styles
-  (`"own sessions"` + `study_sessions_owner`) — possible cross-app overlap,
-  verify before touching.
-- Auth: enable leaked-password protection (HaveIBeenPwned) in the dashboard.
-- Study Genius policies target `anon`/`public` role rather than
-  `authenticated` — tighten if anonymous sign-ins stay disabled.
-- The `function_search_path_mutable` / `pg_trgm-in-public` warnings are the
-  **other app's** objects — not ours, leave them.
+Audited the 14 `public.*` tables from `supabase/migrations/*` against the live
+DB. **All 14 have RLS enabled with exactly one correct owner-scoped policy**
+(`auth.uid() = user_id` / `= id`, role `authenticated`) — nothing deny-all,
+nothing broken.
+
+- The advisor's `rls_enabled_no_policy` list (`analysis`, `app_profile`,
+  `favorites`, `groups`, `settings`, `store`, `uploads`, `posts`,
+  `properties`, `lead_scores`, …) contains **zero Study Genius tables** —
+  all belong to the co-hosted real-estate app or the `lao` schema app.
+- The advisor showing `public.profiles` / `public.study_sessions` with extra
+  policies (`profiles_select_self`, `study_sessions_owner`, …) was
+  **conflating the identically-named `lao.*` tables** — direct query confirms
+  our `public` tables have one policy each. No real collision.
+- `function_search_path_mutable` / `pg_trgm-in-public` warnings are the other
+  app's objects — leave them.
+
+**Real finding — anonymous sign-ins are ENABLED project-wide.** 2 of 3
+`auth.users` are `is_anonymous=true` (created 08-26 / 08-28). Our app never
+calls `signInAnonymously`, but the setting is on (needed by / left on for a
+co-hosted app?), our `on_auth_user_created` trigger gives anon users a
+`profiles` row, and our `TO authenticated` policies also admit anon-session
+users (Supabase's `authenticated` role covers them). Not urgent, but it's an
+unintended surface — anyone gets a working session + can hit Gemini endpoints
+without Google. Options when ready: disable "Allow anonymous sign-ins" in the
+dashboard (confirm the other apps don't need it first), or add
+`AND (auth.jwt()->>'is_anonymous')::boolean IS FALSE` to each policy.
+
+Minor: leaked-password protection is disabled (dashboard toggle) — low
+priority since primary auth is Google OAuth.
 
 ### Backend: Supabase project `knqcmptpejylvlnhmssx` ("App Claude")
 
