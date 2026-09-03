@@ -206,6 +206,8 @@ const fr = {
   "error.rate_limit": "Le service AI est saturé, réessaie dans un instant.",
   "error.too_long": "Le contenu est trop volumineux.",
   "error.video": "Impossible d'analyser cette vidéo.",
+  "error.analysisTimeout":
+    "L'analyse prend trop de temps. Le document a peut-être été traité — vérifie tes cours dans un instant.",
   "status.pending": "En attente",
   "status.processing": "Analyse en cours…",
   "status.completed": "Terminé",
@@ -385,6 +387,8 @@ const en: Dict = {
   "error.rate_limit": "AI service is busy, try again shortly.",
   "error.too_long": "The content is too large.",
   "error.video": "This video could not be analyzed.",
+  "error.analysisTimeout":
+    "Analysis is taking too long. The document may have been processed — check your courses in a moment.",
   "status.pending": "Pending",
   "status.processing": "Processing…",
   "status.completed": "Completed",

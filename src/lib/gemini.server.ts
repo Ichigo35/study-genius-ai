@@ -92,13 +92,29 @@ async function callGemini(opts: {
 
     const raw = await res.text();
     if (res.status === 429) {
-      lastError = new GeminiError("rate_limit", "Limite de l'API Gemini atteinte. Réessaie plus tard.", 429);
-      await sleep(1500 * (attempt + 1));
-      continue;
+      console.error(`[gemini] 429 (model=${model}): ${raw.slice(0, 500)}`);
+      // Free-tier daily cap (e.g. 20 req/day on gemini-3.6-flash) — retrying is
+      // pointless, tell the user to enable billing on the key.
+      const dailyCap = /PerDay|free_tier|RESOURCE_EXHAUSTED.*day|GenerateRequestsPerDay/i.test(raw);
+      if (dailyCap) {
+        throw new GeminiError(
+          "quota_free_tier",
+          "Quota gratuit de l'API Gemini épuisé pour aujourd'hui. Active la facturation sur la clé (aistudio.google.com/apikey → Set up billing).",
+          429,
+        );
+      }
+      const retryMs = parseRetryDelay(raw);
+      if (retryMs !== null && retryMs <= 12_000 && attempt < maxAttempts - 1) {
+        lastError = new GeminiError("rate_limit", "Limite de l'API Gemini atteinte. Réessaie plus tard.", 429);
+        await sleep(retryMs + 250);
+        continue;
+      }
+      throw new GeminiError("rate_limit", "Limite de l'API Gemini atteinte. Réessaie dans une minute.", 429);
     }
     if (res.status >= 500) {
-      lastError = new GeminiError("upstream", "Le service AI est temporairement indisponible.", 503);
-      await sleep(1000 * (attempt + 1));
+      console.error(`[gemini] ${res.status} (model=${model}): ${raw.slice(0, 300)}`);
+      lastError = new GeminiError("upstream", "Le service AI Gemini est surchargé. Réessaie dans un instant.", 503);
+      await sleep(1500 * (attempt + 1));
       continue;
     }
     if (res.status === 400 && /too large|exceeds|token/i.test(raw)) {
@@ -128,6 +144,12 @@ async function callGemini(opts: {
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Pull the `retryDelay` (e.g. "23s" / "1.5s") out of a Gemini 429 body. */
+function parseRetryDelay(raw: string): number | null {
+  const m = raw.match(/"retryDelay"\s*:\s*"?(\d+(?:\.\d+)?)s"?/i);
+  return m ? Math.ceil(parseFloat(m[1]!) * 1000) : null;
 }
 
 function parseJson<T>(text: string): T {

@@ -37,10 +37,15 @@ export function useMediaAnalyzer() {
     }
     setStep(0);
     const ticker = setInterval(() => setStep((s) => (s < 4 ? s + 1 : s)), 9000);
+    // Hard ceiling so the progress screen can't spin forever if the server
+    // stalls or the connection is silently dropped.
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(t("error.analysisTimeout"))), 180_000),
+    );
     try {
       const isPlainText = payload.mimeType.startsWith("text/");
-      const result = isPlainText
-        ? await runText({
+      const request = isPlainText
+        ? runText({
             data: {
               spaceId: state.spaceId,
               title: payload.fileName,
@@ -49,7 +54,7 @@ export function useMediaAnalyzer() {
               outputLanguage: state.outputLanguage,
             },
           })
-        : await runMedia({
+        : runMedia({
             data: {
               spaceId: state.spaceId,
               title: payload.fileName,
@@ -61,6 +66,7 @@ export function useMediaAnalyzer() {
               outputLanguage: state.outputLanguage,
             },
           });
+      const result = await Promise.race([request, timeout]);
 
       if (!result.ok) {
         toast.error(result.error?.message ?? t("error.generic"));
