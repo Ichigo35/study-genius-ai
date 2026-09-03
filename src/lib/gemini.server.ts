@@ -26,7 +26,10 @@ type Part =
   | { fileData: { mimeType?: string; fileUri: string } };
 
 function apiKey() {
-  const key = process.env["GEMINI_API_KEY"];
+  // Tolerate secrets pasted with surrounding quotes or stray whitespace/newlines —
+  // those turn a valid AIza… key into a 400/401 from Google.
+  const raw = process.env["GEMINI_API_KEY"];
+  const key = raw?.trim().replace(/^["']|["']$/g, "").trim();
   if (!key) throw new GeminiError("no_key", "GEMINI_API_KEY manquante côté serveur", 500);
   return key;
 }
@@ -98,9 +101,22 @@ async function callGemini(opts: {
     if (res.status === 400 && /too large|exceeds|token/i.test(raw)) {
       throw new GeminiError("too_long", "Le contenu est trop volumineux pour être analysé.", 400);
     }
-    if (res.status === 401 || res.status === 403) {
-      throw new GeminiError("auth", "Clé Gemini invalide ou non autorisée.", 401);
+    // Google returns 400 API_KEY_INVALID for a malformed key, 403 for a disabled
+    // API / key restriction. Log the upstream reason (never contains the key) so
+    // `wrangler tail` can pinpoint it, then surface a clear message.
+    const isKeyInvalid = res.status === 400 && /api[_ ]?key[_ ]?(not valid|invalid)|API_KEY_INVALID/i.test(raw);
+    if (res.status === 401 || res.status === 403 || isKeyInvalid) {
+      console.error(`[gemini] auth failure ${res.status} (model=${model}): ${raw.slice(0, 500)}`);
+      const disabled = /SERVICE_DISABLED|has not been used|is disabled/i.test(raw);
+      throw new GeminiError(
+        "auth",
+        disabled
+          ? "L'API Gemini n'est pas activée pour ce projet Google Cloud."
+          : "Clé Gemini invalide ou non autorisée.",
+        401,
+      );
     }
+    console.error(`[gemini] api error ${res.status} (model=${model}): ${raw.slice(0, 500)}`);
     throw new GeminiError("api_error", `Erreur Gemini (${res.status}): ${raw.slice(0, 300)}`, res.status);
   }
 
