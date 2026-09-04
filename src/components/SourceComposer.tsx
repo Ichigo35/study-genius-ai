@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useI18n } from "@/i18n";
@@ -86,11 +86,22 @@ export function SpaceAndDetailPicker({ state }: { state: ReturnType<typeof useCo
 
 export function AnalysisProgress({ stage }: { stage: string }) {
   const { t } = useI18n();
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const mm = Math.floor(elapsed / 60);
+  const ss = (elapsed % 60).toString().padStart(2, "0");
+
   return (
     <div className="card-soft animate-rise p-5">
       <div className="mb-4 flex items-center gap-2">
         <Loader2 className="size-4 animate-spin text-primary" />
         <p className="font-semibold">{t("processing.title")}</p>
+        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+          {mm}:{ss}
+        </span>
       </div>
       <ProcessingSteps
         steps={[

@@ -5,11 +5,21 @@
 
 // Model *fallback chains* (comma-separated env override). callGemini walks the
 // chain: if a model is rate-limited / out of daily free-tier quota / overloaded
-// / unavailable, it automatically retries the request on the next model.
-// Each model has its own separate free-tier daily quota (~20 req/day), so the
-// chain also stretches free-tier usage. gemini-2.5-flash (exact) is NOT usable
-// — it 404s "no longer available to new users" — but 2.5-flash-lite is.
-const DEFAULT_CHAIN = "gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite";
+// / unavailable / too slow, it moves the request to the next model immediately.
+// Each *distinct* model version has its own separate free-tier quota, so a
+// longer chain multiplies free-tier headroom. gemini-2.5-flash (exact) is NOT
+// usable — it 404s "no longer available to new users" — but the ones below are.
+// NOTE: the free tier is small; the real fix for sustained use is enabling
+// billing on the key (aistudio.google.com/apikey → Set up billing).
+const DEFAULT_CHAIN = [
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-flash-latest",
+  "gemini-flash-lite-latest",
+].join(",");
 const MODELS = {
   text: parseChain(process.env["GEMINI_MODEL_TEXT"]),
   multimodal: parseChain(process.env["GEMINI_MODEL_MULTIMODAL"]),
@@ -44,7 +54,10 @@ function apiKey() {
   // Tolerate secrets pasted with surrounding quotes or stray whitespace/newlines —
   // those turn a valid AIza… key into a 400/401 from Google.
   const raw = process.env["GEMINI_API_KEY"];
-  const key = raw?.trim().replace(/^["']|["']$/g, "").trim();
+  const key = raw
+    ?.trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
   if (!key) throw new GeminiError("no_key", "GEMINI_API_KEY manquante côté serveur", 500);
   return key;
 }
@@ -56,7 +69,12 @@ interface CallOpts {
   system?: string;
   schema?: unknown;
   temperature?: number;
+  /** Same-model retries on transient errors. Default 1 (0 for big uploads). */
   retries?: number;
+  /** Per-attempt hard timeout (ms). Default 70s. */
+  timeoutMs?: number;
+  /** Overall budget for walking the whole chain (ms). Default 150s. */
+  totalBudgetMs?: number;
 }
 
 // Errors that mean "this model won't work right now, try the next one".
@@ -65,6 +83,7 @@ const FALLBACK_CODES = new Set([
   "rate_limit",
   "upstream",
   "network",
+  "timeout",
   "model_unavailable",
 ]);
 
@@ -75,42 +94,59 @@ const FALLBACK_CODES = new Set([
  */
 async function callGemini(opts: CallOpts): Promise<string> {
   const chain = opts.models?.length ? opts.models : MODELS.text;
+  const deadline = Date.now() + (opts.totalBudgetMs ?? 150_000);
   let lastError: GeminiError = new GeminiError("unknown", "Erreur inconnue du service AI.", 500);
 
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i]!;
+    if (Date.now() > deadline) {
+      console.error(`[gemini] chain budget exhausted before "${model}"`);
+      throw lastError;
+    }
     try {
-      return await callModelOnce(model, opts);
+      return await callModelOnce(model, opts, deadline);
     } catch (e) {
       const err = e instanceof GeminiError ? e : new GeminiError("unknown", String(e), 500);
       // Keep the most actionable error to surface if the whole chain fails.
       if (err.code === "quota_free_tier" || lastError.code !== "quota_free_tier") lastError = err;
       if (!FALLBACK_CODES.has(err.code) || i === chain.length - 1) throw lastError;
-      console.error(`[gemini] "${model}" failed (${err.code}) → falling back to "${chain[i + 1]}"`);
+      console.error(
+        `[gemini] "${model}" failed (${err.code}: ${err.message}) → next model "${chain[i + 1]}"`,
+      );
     }
   }
   throw lastError;
 }
 
-async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
+async function callModelOnce(
+  model: string,
+  opts: CallOpts,
+  deadline = Date.now() + 150_000,
+): Promise<string> {
   const key = apiKey();
   const url = `${BASE}/models/${model}:generateContent`;
+  const timeoutMs = opts.timeoutMs ?? 70_000;
 
   const body: Record<string, unknown> = {
     contents: [{ role: "user", parts: opts.parts }],
     generationConfig: {
       temperature: opts.temperature ?? 0.4,
-      ...(opts.schema
-        ? { responseMimeType: "application/json", responseSchema: opts.schema }
-        : {}),
+      ...(opts.schema ? { responseMimeType: "application/json", responseSchema: opts.schema } : {}),
     },
   };
   if (opts.system) body["systemInstruction"] = { parts: [{ text: opts.system }] };
 
-  const maxAttempts = (opts.retries ?? 2) + 1;
+  const maxAttempts = (opts.retries ?? 1) + 1;
   let lastError: GeminiError | null = null;
+  const payload = JSON.stringify(body);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (Date.now() > deadline) {
+      throw lastError ?? new GeminiError("timeout", "Délai dépassé pour le service AI.", 504);
+    }
+    const controller = new AbortController();
+    const budgetLeft = Math.max(1_000, deadline - Date.now());
+    const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, budgetLeft));
     let res: Response;
     try {
       res = await fetch(url, {
@@ -121,12 +157,25 @@ async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
           // `Authorization: Bearer` is only for OAuth2 access tokens, not API keys.
           "x-goog-api-key": key,
         },
-        body: JSON.stringify(body),
+        body: payload,
+        signal: controller.signal,
       });
-    } catch {
+    } catch (e) {
+      clearTimeout(timer);
+      const aborted = controller.signal.aborted || (e instanceof Error && e.name === "AbortError");
+      if (aborted) {
+        // Model is too slow — don't retry it, let the chain try the next one.
+        throw new GeminiError(
+          "timeout",
+          `Le modèle Gemini "${model}" n'a pas répondu à temps.`,
+          504,
+        );
+      }
       lastError = new GeminiError("network", "Service AI temporairement indisponible.", 503);
       await sleep(800 * (attempt + 1));
       continue;
+    } finally {
+      clearTimeout(timer);
     }
 
     if (res.ok) {
@@ -143,7 +192,10 @@ async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
       console.error(`[gemini] 429 (model=${model}): ${raw.slice(0, 500)}`);
       // Free-tier daily cap (e.g. 20 req/day on gemini-3.6-flash) — retrying is
       // pointless, tell the user to enable billing on the key.
-      const dailyCap = /PerDay|free_tier|RESOURCE_EXHAUSTED.*day|GenerateRequestsPerDay/i.test(raw);
+      const dailyCap =
+        /PerDay|free[_ ]?tier|RESOURCE_EXHAUSTED.*day|RequestsPerDay|quota metric.*day|exceeded your current quota/i.test(
+          raw,
+        );
       if (dailyCap) {
         throw new GeminiError(
           "quota_free_tier",
@@ -153,15 +205,27 @@ async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
       }
       const retryMs = parseRetryDelay(raw);
       if (retryMs !== null && retryMs <= 12_000 && attempt < maxAttempts - 1) {
-        lastError = new GeminiError("rate_limit", "Limite de l'API Gemini atteinte. Réessaie plus tard.", 429);
+        lastError = new GeminiError(
+          "rate_limit",
+          "Limite de l'API Gemini atteinte. Réessaie plus tard.",
+          429,
+        );
         await sleep(retryMs + 250);
         continue;
       }
-      throw new GeminiError("rate_limit", "Limite de l'API Gemini atteinte. Réessaie dans une minute.", 429);
+      throw new GeminiError(
+        "rate_limit",
+        "Limite de l'API Gemini atteinte. Réessaie dans une minute.",
+        429,
+      );
     }
     if (res.status >= 500) {
       console.error(`[gemini] ${res.status} (model=${model}): ${raw.slice(0, 300)}`);
-      lastError = new GeminiError("upstream", "Le service AI Gemini est surchargé. Réessaie dans un instant.", 503);
+      lastError = new GeminiError(
+        "upstream",
+        "Le service AI Gemini est surchargé. Réessaie dans un instant.",
+        503,
+      );
       await sleep(1500 * (attempt + 1));
       continue;
     }
@@ -177,7 +241,8 @@ async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
     // Google returns 400 API_KEY_INVALID for a malformed key, 403 for a disabled
     // API / key restriction. Log the upstream reason (never contains the key) so
     // `wrangler tail` can pinpoint it, then surface a clear message.
-    const isKeyInvalid = res.status === 400 && /api[_ ]?key[_ ]?(not valid|invalid)|API_KEY_INVALID/i.test(raw);
+    const isKeyInvalid =
+      res.status === 400 && /api[_ ]?key[_ ]?(not valid|invalid)|API_KEY_INVALID/i.test(raw);
     if (res.status === 401 || res.status === 403 || isKeyInvalid) {
       console.error(`[gemini] auth failure ${res.status} (model=${model}): ${raw.slice(0, 500)}`);
       const disabled = /SERVICE_DISABLED|has not been used|is disabled/i.test(raw);
@@ -190,7 +255,11 @@ async function callModelOnce(model: string, opts: CallOpts): Promise<string> {
       );
     }
     console.error(`[gemini] api error ${res.status} (model=${model}): ${raw.slice(0, 500)}`);
-    throw new GeminiError("api_error", `Erreur Gemini (${res.status}): ${raw.slice(0, 300)}`, res.status);
+    throw new GeminiError(
+      "api_error",
+      `Erreur Gemini (${res.status}): ${raw.slice(0, 300)}`,
+      res.status,
+    );
   }
 
   throw lastError ?? new GeminiError("unknown", "Erreur inconnue du service AI.", 500);
@@ -312,7 +381,11 @@ const STUDY_SYSTEM =
 export const geminiService = {
   async summarizeContent(text: string, outputLanguage: string) {
     return callGemini({
-      parts: [{ text: `Summarize the following course content.\n${languageInstruction(outputLanguage)}\n\n${text}` }],
+      parts: [
+        {
+          text: `Summarize the following course content.\n${languageInstruction(outputLanguage)}\n\n${text}`,
+        },
+      ],
       system: STUDY_SYSTEM,
     });
   },
@@ -344,6 +417,11 @@ ${input.content}`,
   async transcribeVideo(input: { url: string }): Promise<string> {
     return callGemini({
       models: MODELS.multimodal,
+      // Big input, its own client-driven step: never re-upload to the same
+      // model, just move down the chain. Allow a long single attempt.
+      retries: 0,
+      timeoutMs: 115_000,
+      totalBudgetMs: 170_000,
       parts: [
         { fileData: { fileUri: input.url } },
         {
@@ -357,6 +435,9 @@ ${input.content}`,
   async transcribeAudio(input: { base64: string; mimeType: string }): Promise<string> {
     return callGemini({
       models: MODELS.multimodal,
+      retries: 0,
+      timeoutMs: 115_000,
+      totalBudgetMs: 170_000,
       temperature: 0.2,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
@@ -370,6 +451,9 @@ ${input.content}`,
   async analyzeImage(input: { base64: string; mimeType: string; outputLanguage: string }) {
     return callGemini({
       models: MODELS.multimodal,
+      retries: 0,
+      timeoutMs: 115_000,
+      totalBudgetMs: 170_000,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
         {
@@ -414,7 +498,13 @@ ${input.content}`,
     count: number;
     outputLanguage: string;
   }): Promise<
-    { type: "mcq" | "truefalse" | "short"; question: string; options: string[]; correctAnswer: string; explanation: string }[]
+    {
+      type: "mcq" | "truefalse" | "short";
+      question: string;
+      options: string[];
+      correctAnswer: string;
+      explanation: string;
+    }[]
   > {
     const raw = await callGemini({
       system: STUDY_SYSTEM,
