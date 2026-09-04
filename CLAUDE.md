@@ -77,26 +77,34 @@ a static export — a static build would break every Gemini-backed feature.
   "extract raw text" prompts; `generateStudyNotes` capped at 200k chars; a
   base64-less resume driver fails a stuck media transcript after 150s.
 
-- **2026-09-04 — ROOT CAUSE of the failing analyses: Gemini geo-block.**
-  `wrangler tail` finally showed every model returning
-  `400 FAILED_PRECONDITION: "User location is not supported for the API use"`
-  — Google geo-blocks the Cloudflare Worker's egress IP. The stepped
-  pipeline / timeout / model-name work above was all real but secondary.
-  **Fix = route Gemini through a Cloudflare AI Gateway** (`google-ai-studio`
-  provider) so the upstream call leaves from a supported region. **Done:**
-  - AI Gateway **`study-genius`** created (account
-    `34cf747a1eaf3858a49e4fafaf9580e0`), *Authenticated Gateway* toggled OFF
-    (our Worker calls it with a plain `fetch` + the Gemini key, no
-    `cf-aig-authorization`). Logs on, cache off.
-  - Worker secret **`GEMINI_API_BASE`** =
-    `https://gateway.ai.cloudflare.com/v1/34cf747a1eaf3858a49e4fafaf9580e0/study-genius/google-ai-studio/v1beta`
-  - Code reads it per-call (`apiBase()` in `gemini.server.ts`); unset = call
-    Google directly. A geo-block response short-circuits the chain with
-    `GeminiError("geo_blocked")`.
-  - **LIVE** — version `20a83356` ships the code that reads `GEMINI_API_BASE`.
-    Confirmed via AI Gateway logs: requests now reach Google (no more
-    geo-block); logged request location is "Vientiane Prefecture" → **the user
-    is in Laos**, which Gemini doesn't support directly.
+- **2026-09-04 — ROOT CAUSE: Google geo-blocks the free Gemini API from Laos.**
+  `wrangler tail` + AI Gateway logs: every model returns
+  `400 FAILED_PRECONDITION: "User location is not supported for the API use"`.
+  The Worker runs in a Vientiane Cloudflare colo → **the user is in Laos**,
+  which `generativelanguage.googleapis.com` (the free AI Studio API) does not
+  serve. Everything above (stepped pipeline, timeouts, model names) was real
+  but secondary.
+  - **The Cloudflare AI Gateway does NOT fix this** — confirmed: requests
+    proxied through gateway `study-genius` (`google-ai-studio` provider) still
+    come back `FAILED_PRECONDITION`. `GEMINI_API_BASE` secret is set to the
+    gateway URL and harmless, but it doesn't help; leave it or clear it.
+  - **The fix is Vertex AI** (`{region}-aiplatform.googleapis.com`) —
+    region-pinned, not country-gated. `gemini.server.ts` uses it when these
+    Worker secrets are set (code shipped, **inactive until then**):
+    - `VERTEX_SA_KEY` — the GCP service-account JSON, minified to one line
+    - `VERTEX_PROJECT` — GCP project id (the one that owns the OAuth client)
+    - `VERTEX_LOCATION` — optional, default `us-central1`
+    Setup: GCP console → enable **Vertex AI API** + **billing** on the
+    project → IAM → create a service account with role **Vertex AI User** →
+    create a JSON key → `wrangler secret put VERTEX_SA_KEY` (paste the JSON) +
+    `VERTEX_PROJECT`, then `bun run build && npx nitro deploy --prebuilt`.
+    Vertex Flash pricing is ~pennies; there's also the $300 GCP trial credit.
+  - Vertex model ids differ (no `-latest`, no 3.x previews):
+    `DEFAULT_VERTEX_CHAIN = gemini-2.5-flash, gemini-2.5-flash-lite,
+    gemini-2.0-flash`; override via `VERTEX_MODEL_TEXT` /
+    `VERTEX_MODEL_MULTIMODAL`.
+  - `waitUntil` **is** available in this Nitro+CF+TanStack setup (confirmed:
+    `[bg] registered with waitUntil` in tail) — background execution works.
 
 - **2026-09-04 — Storage upload + background execution. LIVE (version 8285d8a0).**
   Even with the gateway, the Lao mobile link can't hold one request long
