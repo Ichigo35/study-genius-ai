@@ -34,10 +34,10 @@ const DEFAULT_MULTIMODAL_CHAIN = [
   "gemini-3.5-flash",
   "gemini-3.6-flash",
 ].join(",");
-const MODELS = {
-  text: parseChain(process.env["GEMINI_MODEL_TEXT"], DEFAULT_TEXT_CHAIN),
-  multimodal: parseChain(process.env["GEMINI_MODEL_MULTIMODAL"], DEFAULT_MULTIMODAL_CHAIN),
-} as const;
+// Vertex uses its own model ids (no `-latest` aliases, no 3.x previews).
+const DEFAULT_VERTEX_CHAIN = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"].join(
+  ",",
+);
 
 function parseChain(env: string | undefined, fallback: string): string[] {
   const chain = (env ?? fallback)
@@ -47,17 +47,125 @@ function parseChain(env: string | undefined, fallback: string): string[] {
   return chain.length ? chain : fallback.split(",");
 }
 
-// Cloudflare Workers egress from a Cloudflare IP whose geo-location Google
-// sometimes rejects → `FAILED_PRECONDITION: User location is not supported`.
-// Routing through a Cloudflare AI Gateway ("google-ai-studio" provider) makes
-// the upstream call originate from a supported region and fixes that.
-//   GEMINI_API_BASE = https://gateway.ai.cloudflare.com/v1/<acct>/<gateway>/google-ai-studio/v1beta
-// Falls back to calling Google directly.
-const DIRECT_BASE = "https://generativelanguage.googleapis.com/v1beta";
 // Read per-call: on Workers `process.env` is only populated inside a request.
+function models(kind: "text" | "multimodal"): string[] {
+  if (vertexConfig()) {
+    return parseChain(
+      process.env[kind === "text" ? "VERTEX_MODEL_TEXT" : "VERTEX_MODEL_MULTIMODAL"],
+      DEFAULT_VERTEX_CHAIN,
+    );
+  }
+  return kind === "text"
+    ? parseChain(process.env["GEMINI_MODEL_TEXT"], DEFAULT_TEXT_CHAIN)
+    : parseChain(process.env["GEMINI_MODEL_MULTIMODAL"], DEFAULT_MULTIMODAL_CHAIN);
+}
+
+// --- Google backend selection -------------------------------------------------
+// The free AI Studio API (`generativelanguage.googleapis.com`) geo-blocks some
+// countries (e.g. Laos) with `FAILED_PRECONDITION: User location is not
+// supported` — and a Cloudflare AI Gateway does NOT bypass it (confirmed).
+// The real fix is **Vertex AI**, which is region-pinned and not country-gated.
+//
+//   VERTEX_SA_KEY   = the service-account JSON (one line)
+//   VERTEX_PROJECT  = GCP project id
+//   VERTEX_LOCATION = region (default us-central1)
+//
+// If those aren't set we fall back to the AI Studio API, optionally via
+//   GEMINI_API_BASE = https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/google-ai-studio/v1beta
+const DIRECT_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+interface VertexConfig {
+  sa: { client_email: string; private_key: string };
+  project: string;
+  location: string;
+}
+
+function vertexConfig(): VertexConfig | null {
+  const raw = process.env["VERTEX_SA_KEY"]?.trim();
+  const project = process.env["VERTEX_PROJECT"]?.trim();
+  if (!raw || !project) return null;
+  try {
+    const sa = JSON.parse(raw) as { client_email: string; private_key: string };
+    if (!sa.client_email || !sa.private_key) return null;
+    return { sa, project, location: process.env["VERTEX_LOCATION"]?.trim() || "us-central1" };
+  } catch {
+    return null;
+  }
+}
+
 function apiBase() {
   const override = process.env["GEMINI_API_BASE"]?.trim().replace(/\/+$/, "");
   return override || DIRECT_BASE;
+}
+
+// --- Vertex OAuth (service-account JWT → access token), cached per isolate ----
+let vertexToken: { value: string; exp: number } | null = null;
+
+function b64url(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function pemToPkcs8(pem: string): ArrayBuffer {
+  const b64 = pem
+    .replace(/-----BEGIN [^-]+-----/, "")
+    .replace(/-----END [^-]+-----/, "")
+    .replace(/\s+/g, "");
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+
+async function getVertexToken(cfg: VertexConfig): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  if (vertexToken && vertexToken.exp - 120 > now) return vertexToken.value;
+
+  const header = b64url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const claim = b64url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        iss: cfg.sa.client_email,
+        scope: "https://www.googleapis.com/auth/cloud-platform",
+        aud: "https://oauth2.googleapis.com/token",
+        iat: now,
+        exp: now + 3600,
+      }),
+    ),
+  );
+  const signingInput = `${header}.${claim}`;
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToPkcs8(cfg.sa.private_key),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+  const assertion = `${signingInput}.${b64url(new Uint8Array(sig))}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${assertion}`,
+  });
+  const json = (await res.json()) as { access_token?: string; expires_in?: number; error?: string };
+  if (!res.ok || !json.access_token) {
+    throw new GeminiError(
+      "auth",
+      `Impossible d'obtenir un jeton Vertex AI (${json.error ?? res.status}).`,
+      500,
+    );
+  }
+  vertexToken = { value: json.access_token, exp: now + (json.expires_in ?? 3600) };
+  return json.access_token;
 }
 
 export class GeminiError extends Error {
@@ -88,8 +196,10 @@ function apiKey() {
 }
 
 interface CallOpts {
-  /** Explicit model chain; defaults to MODELS.text. */
+  /** Explicit model chain. Otherwise the chain for `kind` is used. */
   models?: string[];
+  /** Which default chain to walk when `models` is omitted. */
+  kind?: "text" | "multimodal";
   parts: Part[];
   system?: string;
   schema?: unknown;
@@ -124,7 +234,7 @@ const FALLBACK_CODES = new Set([
  * unavailable. Only throws once every model in the chain has failed.
  */
 async function callGemini(opts: CallOpts): Promise<string> {
-  const chain = opts.models?.length ? opts.models : MODELS.text;
+  const chain = opts.models?.length ? opts.models : models(opts.kind ?? "text");
   const deadline = Date.now() + (opts.totalBudgetMs ?? 150_000);
   let lastError: GeminiError = new GeminiError("unknown", "Erreur inconnue du service AI.", 500);
 
@@ -155,8 +265,16 @@ async function callModelOnce(
   opts: CallOpts,
   deadline = Date.now() + 150_000,
 ): Promise<string> {
-  const key = apiKey();
-  const url = `${apiBase()}/models/${model}:generateContent`;
+  const vertex = vertexConfig();
+  let url: string;
+  let authHeaders: Record<string, string>;
+  if (vertex) {
+    url = `https://${vertex.location}-aiplatform.googleapis.com/v1/projects/${vertex.project}/locations/${vertex.location}/publishers/google/models/${model}:generateContent`;
+    authHeaders = { authorization: `Bearer ${await getVertexToken(vertex)}` };
+  } else {
+    url = `${apiBase()}/models/${model}:generateContent`;
+    authHeaders = { "x-goog-api-key": apiKey() };
+  }
   const timeoutMs = opts.timeoutMs ?? 70_000;
 
   // Some models reject `thinkingConfig`; if that happens we drop it, remember
@@ -191,12 +309,7 @@ async function callModelOnce(
     try {
       res = await fetch(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          // Works for every API key format (AIza… and the newer AQ.… keys).
-          // `Authorization: Bearer` is only for OAuth2 access tokens, not API keys.
-          "x-goog-api-key": key,
-        },
+        headers: { "content-type": "application/json", ...authHeaders },
         body: payload,
         signal: controller.signal,
       });
@@ -275,7 +388,7 @@ async function callModelOnce(
       console.error(`[gemini] geo-blocked (model=${model}): ${raw.slice(0, 300)}`);
       throw new GeminiError(
         "geo_blocked",
-        "L'API Gemini refuse la localisation du serveur (passe par un Cloudflare AI Gateway — voir GEMINI_API_BASE).",
+        "Google bloque l'API Gemini pour ce pays. Configure Vertex AI (VERTEX_SA_KEY / VERTEX_PROJECT) — c'est le seul contournement fiable.",
         403,
       );
     }
@@ -451,7 +564,7 @@ const STUDY_SYSTEM =
 // which forced a wasteful re-upload of the whole file. The lite models are
 // already fast enough. Structuring happens later in `generateStudyNotes`.
 const MULTIMODAL_OPTS = {
-  models: MODELS.multimodal as string[],
+  kind: "multimodal" as const,
   retries: 0,
   timeoutMs: 100_000,
   totalBudgetMs: 220_000,

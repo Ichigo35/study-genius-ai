@@ -382,6 +382,7 @@ export async function advanceAnalysis(
             await supabase.storage.from(UPLOAD_BUCKET).remove([storagePath]);
           }
         } catch (e) {
+          // Keep the upload on failure so a retry can reuse it.
           await fail(supabase, sourceId, e);
         }
       })(),
@@ -482,11 +483,23 @@ export async function retryAnalysis(
     .limit(1);
   const hasContent = !!(tr?.[0]?.full_text || src.raw_text);
   const canRegenFromUrl = src.type === "youtube" && !!src.original_url;
+
+  // Media source with no transcript yet: retry is still possible if the
+  // original upload is still in Storage.
+  let hasUpload = false;
   if (!hasContent && !canRegenFromUrl) {
-    return {
-      ok: false as const,
-      error: { code: "needs_reupload", message: "Réimporte le fichier pour relancer l'analyse." },
-    };
+    const path = (src.storage_path as string | null) || `${userId}/${sourceId}`;
+    const { data: dl } = await supabase.storage.from(UPLOAD_BUCKET).download(path);
+    hasUpload = !!dl;
+    if (!hasUpload) {
+      return {
+        ok: false as const,
+        error: {
+          code: "needs_reupload",
+          message: "Réimporte le fichier pour relancer l'analyse.",
+        },
+      };
+    }
   }
 
   await supabase.from("study_notes").delete().eq("source_id", sourceId);
