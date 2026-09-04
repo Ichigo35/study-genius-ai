@@ -51,14 +51,13 @@ a static export — a static build would break every Gemini-backed feature.
   client helpers in `src/lib/sources.ts` (`reclaimStaleSources`,
   `deleteSource`, `deleteSpace`). APK unchanged (loads the live URL via
   `server.url`).
-- **2026-09-04 — stepped analysis pipeline. NOT YET DEPLOYED.** Fixes the
-  analysis getting stuck on "Éléments de révision" then failing with a
-  timeout. `analyzeYouTube`/`analyzeText`/`analyzeMedia` → `startYouTube`/
-  `startText`/`startMedia` + new `advanceAnalysis` server fn; new
+- **2026-09-04 — stepped analysis pipeline. LIVE** (version `9d1eff48`,
+  deployed by the user). Fixes the analysis getting stuck on "Éléments de
+  révision" then failing with a timeout.
+  `analyzeYouTube`/`analyzeText`/`analyzeMedia` → `startYouTube`/`startText`/
+  `startMedia` + new `advanceAnalysis` server fn; new
   `src/lib/analysisDrive.ts`. See "Client analysis flow — stepped pipeline".
-  `bun run build` + `tsc` green. Needs the user to run
-  `npx nitro deploy --prebuilt` (classifier blocks it for the agent). APK
-  unchanged (live URL via `server.url`).
+  APK unchanged (live URL via `server.url`).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
