@@ -47,7 +47,14 @@ function parseChain(env: string | undefined, fallback: string): string[] {
   return chain.length ? chain : fallback.split(",");
 }
 
-const BASE = "https://generativelanguage.googleapis.com/v1beta";
+// Cloudflare Workers egress from a Cloudflare IP whose geo-location Google
+// sometimes rejects → `FAILED_PRECONDITION: User location is not supported`.
+// Routing through a Cloudflare AI Gateway ("google-ai-studio" provider) makes
+// the upstream call originate from a supported region and fixes that.
+//   GEMINI_API_BASE = https://gateway.ai.cloudflare.com/v1/<acct>/<gateway>/google-ai-studio/v1beta
+// Falls back to calling Google directly.
+const DIRECT_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const BASE = (process.env["GEMINI_API_BASE"]?.trim().replace(/\/+$/, "") || DIRECT_BASE) as string;
 
 export class GeminiError extends Error {
   code: string;
@@ -258,7 +265,17 @@ async function callModelOnce(
       await sleep(1500 * (attempt + 1));
       continue;
     }
-    // Any 400 while we're sending `thinkingConfig`: Google often just says
+    // Google geo-blocks the Cloudflare egress IP. Every model fails identically,
+    // so stop immediately and tell the user how to fix it (AI Gateway).
+    if (/User location is not supported|FAILED_PRECONDITION/i.test(raw)) {
+      console.error(`[gemini] geo-blocked (model=${model}): ${raw.slice(0, 300)}`);
+      throw new GeminiError(
+        "geo_blocked",
+        "L'API Gemini refuse la localisation du serveur (passe par un Cloudflare AI Gateway — voir GEMINI_API_BASE).",
+        403,
+      );
+    }
+    // Any other 400 while we're sending `thinkingConfig`: Google often just says
     // "Request contains an invalid argument" with no detail, so assume it's the
     // thinking config, drop it, and retry the same model once.
     if (res.status === 400 && includeThinking) {
