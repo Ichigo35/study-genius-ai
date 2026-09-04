@@ -65,18 +65,17 @@ a static export — a static build would break every Gemini-backed feature.
   extended with `gemini-2.0-flash` / `-lite` (~200/day). Elapsed timer in
   `AnalysisProgress`. **The free tier was genuinely used up that day —
   enabling billing on the key is still the durable fix.**
-- **2026-09-04 — transcription speed rewrite. LIVE** (version `63dc450d`,
-  deployed by the user). Live
-  `wrangler tail` showed the transcription step walking the *whole* chain
-  with every model timing out: "thinking" models take minutes on a big
-  PDF/audio payload. Fixes: separate `DEFAULT_MULTIMODAL_CHAIN` (fast lite
-  models first: `gemini-2.0-flash-lite`, `2.5-flash-lite`,
-  `flash-lite-latest`, …), `CallOpts.noThinking` →
-  `thinkingConfig.thinkingBudget=0` for transcription/OCR (with a graceful
-  400-retry-without-it), transcription budget cut to 85s/attempt · 130s total
-  so it fits one mobile HTTP request, simplified "extract raw text" prompts,
-  `generateStudyNotes` capped at 200k chars. A base64-less resume driver
-  fails a stuck media transcript after 150s.
+- **2026-09-04 — transcription speed rewrite + model list fix. LIVE**
+  (versions `63dc450d` then `<next>`). `wrangler tail` showed: (a) "thinking"
+  models time out on big PDF/audio payloads; (b) **`gemini-2.0-flash-lite` /
+  `2.5-flash-lite` now 404** ("no longer available"); (c)
+  `gemini-flash-lite-latest` 400s on `thinkingConfig`. Fixes: chains rebuilt
+  with only-working models (3.x + `-latest` aliases), multimodal = lite-first
+  for speed; `CallOpts.noThinking`; *any* 400 with thinking on → drop it +
+  isolate-wide `THINKING_CONFIG_UNSUPPORTED` + retry; leftover 400 → try next
+  model instead of hard-fail; transcription budget 95s/attempt · 150s total;
+  "extract raw text" prompts; `generateStudyNotes` capped at 200k chars; a
+  base64-less resume driver fails a stuck media transcript after 150s.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
@@ -184,31 +183,35 @@ Ne s'applique pas aux simples questions ou explorations.
   gate on the key prefix — Google now issues keys as `AQ.…` as well as the
   older `AIza…`. Getting this wrong = 401 → "Clé Gemini invalide ou non
   autorisée" in the app (this exact bug, fixed 2026-09-03).
+- **Available models (checked live 2026-09-04 via `wrangler tail`).** The
+  **2.0 and 2.5 families now 404** ("no longer available" / "no longer
+  available to new users") — Google's own error points to
+  `gemini-3.5-flash-lite`. Working: `gemini-3.6-flash`, `gemini-3.5-flash`,
+  `gemini-3.5-flash-lite`, `gemini-flash-latest`, `gemini-flash-lite-latest`.
 - **Model fallback chain.** `MODELS.text` / `MODELS.multimodal` are *lists*
   (comma-separated `GEMINI_MODEL_TEXT` / `GEMINI_MODEL_MULTIMODAL` env
-  override; default = `gemini-3.6-flash, gemini-3.5-flash, gemini-2.5-flash-lite,
-  gemini-2.0-flash, gemini-2.0-flash-lite, gemini-flash-latest,
-  gemini-flash-lite-latest`). `callGemini` walks the chain: on 429
-  (quota/rate), 404 (model retired), 5xx (overload), **per-attempt timeout**
-  or network error it moves to the next model. Only 400/401/403 (bad request
-  / auth) short-circuit.
+  override). Defaults: text = `3.6-flash, 3.5-flash, 3.5-flash-lite,
+  flash-latest, flash-lite-latest` (quality first); multimodal =
+  `3.5-flash-lite, flash-lite-latest, flash-latest, 3.5-flash, 3.6-flash`
+  (speed first). `callGemini` walks the chain on 429, 404, 5xx, per-attempt
+  timeout, network error, **or any leftover 400** (treated as model-specific
+  → try next model). Only 401/403 / API_KEY_INVALID short-circuit.
 - **Timeouts / speed (2026-09-04).** Every Gemini `fetch` has an
   `AbortController` timeout (`CallOpts.timeoutMs`, default 70s) plus an
-  overall chain budget (`totalBudgetMs`, default 150s). `callGemini` also
-  skips a model when <18s of budget is left (no doomed slots).
+  overall chain budget (`totalBudgetMs`, default 150s). `callGemini` skips a
+  model when <18s of budget is left.
   - **Transcription / OCR** (`transcribeAudio` / `transcribeVideo` /
     `analyzeImage`) uses `MULTIMODAL_OPTS`: `noThinking: true`
-    (`thinkingConfig.thinkingBudget = 0`), `retries: 0`, `timeoutMs: 85s`,
-    `totalBudgetMs: 130s` — it must complete inside one mobile HTTP request.
-    A "thinking" model on a 15–20 MB PDF/audio takes minutes and times out;
-    the fast lite models do it in seconds. Prompts are "extract raw text
-    only" — structuring is `generateStudyNotes`'s job.
-  - If a model 400s complaining about `thinkingConfig` it's retried once
-    without it (`includeThinking` flip + `attempt--`).
-- Each *distinct* model version has its **own** free-tier bucket. The 3.x
-  previews are ~20 req/day; `gemini-2.0-flash` / `-lite` are ~200/day, so
-  they're the real headroom. `gemini-2.5-flash` (exact) is unusable —
-  404 "no longer available to new users".
+    (`thinkingConfig.thinkingBudget = 0`), `retries: 0`, `timeoutMs: 95s`,
+    `totalBudgetMs: 150s` — must finish inside one mobile HTTP request.
+    Prompts are "extract raw text only"; structuring is
+    `generateStudyNotes`'s job (which is capped at 200k input chars).
+  - **`thinkingConfig` is not universally accepted** — several models 400
+    with just "Request contains an invalid argument". So *any* 400 while
+    `includeThinking` is on → drop it, set the isolate-wide
+    `THINKING_CONFIG_UNSUPPORTED` flag, retry the same model once.
+- Each *distinct* model version has its **own** free-tier bucket (~20–50/day
+  on the 3.x previews). Sustained use still needs **billing on the key**.
 - The Worker secret `GEMINI_API_KEY` is set via
   `wrangler secret put GEMINI_API_KEY --name ichigo35-study-genius-ai`. The
   code trims surrounding quotes/whitespace defensively.

@@ -11,27 +11,28 @@
 // usable — it 404s "no longer available to new users" — but the ones below are.
 // NOTE: the free tier is small; the real fix for sustained use is enabling
 // billing on the key (aistudio.google.com/apikey → Set up billing).
-// Text/notes: quality first (the 3.x "thinking" models write the best notes and
-// the payload is small, so a slow call is acceptable).
+// Model availability (checked live 2026-09-04 via `wrangler tail`): the 2.0/2.5
+// families now 404 "no longer available" — Google points to gemini-3.5-flash-lite.
+// The `-latest` aliases stay valid. Keep only 3.x + aliases here.
+//
+// Text/notes: quality first (the bigger "thinking" models write the best notes
+// and the payload is small, so a slow call is acceptable).
 const DEFAULT_TEXT_CHAIN = [
   "gemini-3.6-flash",
   "gemini-3.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
+  "gemini-3.5-flash-lite",
   "gemini-flash-latest",
   "gemini-flash-lite-latest",
 ].join(",");
-// Transcription / OCR: SPEED first. These run with thinking disabled and a big
-// (audio/PDF) payload; a thinking model here takes minutes and times out. The
-// fast lite models transcribe in seconds and have the largest free-tier quota.
+// Transcription / OCR: SPEED first. Thinking is disabled and the payload is big
+// (audio/PDF); a thinking model here takes minutes and times out. Lite models
+// transcribe in seconds.
 const DEFAULT_MULTIMODAL_CHAIN = [
-  "gemini-2.0-flash-lite",
-  "gemini-2.5-flash-lite",
+  "gemini-3.5-flash-lite",
   "gemini-flash-lite-latest",
-  "gemini-2.0-flash",
   "gemini-flash-latest",
   "gemini-3.5-flash",
+  "gemini-3.6-flash",
 ].join(",");
 const MODELS = {
   text: parseChain(process.env["GEMINI_MODEL_TEXT"], DEFAULT_TEXT_CHAIN),
@@ -92,6 +93,10 @@ interface CallOpts {
   noThinking?: boolean;
 }
 
+// Flipped true the first time a model 400s while we send `thinkingConfig`.
+// Persists for the life of the isolate so we stop wasting a big upload on it.
+let THINKING_CONFIG_UNSUPPORTED = false;
+
 // Errors that mean "this model won't work right now, try the next one".
 const FALLBACK_CODES = new Set([
   "quota_free_tier",
@@ -143,9 +148,9 @@ async function callModelOnce(
   const url = `${BASE}/models/${model}:generateContent`;
   const timeoutMs = opts.timeoutMs ?? 70_000;
 
-  // Some (older / preview) models reject `thinkingConfig`; if that happens we
-  // drop it and retry the same model once.
-  let includeThinking = !!opts.noThinking;
+  // Some models reject `thinkingConfig`; if that happens we drop it, remember
+  // it for the whole isolate, and retry the same model once.
+  let includeThinking = !!opts.noThinking && !THINKING_CONFIG_UNSUPPORTED;
   const buildPayload = () => {
     const generationConfig: Record<string, unknown> = {
       temperature: opts.temperature ?? 0.4,
@@ -253,14 +258,15 @@ async function callModelOnce(
       await sleep(1500 * (attempt + 1));
       continue;
     }
-    // Model doesn't accept `thinkingConfig` — drop it and retry the same model.
-    if (
-      res.status === 400 &&
-      includeThinking &&
-      /thinking|thinkingConfig|thinkingBudget|Unknown name|not supported/i.test(raw)
-    ) {
-      console.error(`[gemini] "${model}" rejected thinkingConfig → retrying without it`);
+    // Any 400 while we're sending `thinkingConfig`: Google often just says
+    // "Request contains an invalid argument" with no detail, so assume it's the
+    // thinking config, drop it, and retry the same model once.
+    if (res.status === 400 && includeThinking) {
+      console.error(
+        `[gemini] "${model}" 400 with thinkingConfig (${raw.slice(0, 200)}) → retry without it`,
+      );
       includeThinking = false;
+      THINKING_CONFIG_UNSUPPORTED = true;
       attempt--; // this doesn't count as a real attempt
       continue;
     }
@@ -290,6 +296,11 @@ async function callModelOnce(
       );
     }
     console.error(`[gemini] api error ${res.status} (model=${model}): ${raw.slice(0, 500)}`);
+    // A leftover 400 is usually model-specific (unsupported arg / schema quirk)
+    // — let the chain try the next model rather than hard-failing the analysis.
+    if (res.status === 400) {
+      throw new GeminiError("model_unavailable", `Requête refusée par "${model}".`, 400);
+    }
     throw new GeminiError(
       "api_error",
       `Erreur Gemini (${res.status}): ${raw.slice(0, 300)}`,
@@ -421,8 +432,8 @@ const MULTIMODAL_OPTS = {
   models: MODELS.multimodal as string[],
   retries: 0,
   noThinking: true,
-  timeoutMs: 85_000,
-  totalBudgetMs: 130_000,
+  timeoutMs: 95_000,
+  totalBudgetMs: 150_000,
   temperature: 0.2,
 } satisfies Partial<CallOpts>;
 
