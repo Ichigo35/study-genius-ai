@@ -180,8 +180,8 @@ a static export — a static build would break every Gemini-backed feature.
      finishes even if the app stops polling. Without it, the app must stay on
      the source page while each step runs (~30 s each now, so usually fine).
 
-- **2026-09-04 — on-demand translation of the fiche + transcription. Code
-  shipped, needs the Worker deploy to go live.**
+- **2026-09-04 — on-demand translation of the fiche + transcription. LIVE**
+  (Worker version `49b5ad40`, deployed by the user).
   The source page (`sources.$sourceId.tsx`) has a "Langue d'affichage" picker:
   Original / Français / English / ไทย / 中文 / 한국어 / 日本語. Picking a
   language translates **both** the study note (structure-preserving, via the
@@ -205,8 +205,6 @@ a static export — a static build would break every Gemini-backed feature.
     `content_translations`).
   - **No cron backstop** — translation only runs while the user is on the
     source page. Each translate call is one Gemini request per kind (~5–15 s).
-  - Still needs: `bun run build && node scripts/patch-placement.mjs &&
-    npx nitro deploy --prebuilt` (client bundle change).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
