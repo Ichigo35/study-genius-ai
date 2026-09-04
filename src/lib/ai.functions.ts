@@ -70,18 +70,13 @@ export const startMedia = createServerFn({ method: "POST" })
 export const advanceAnalysis = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z
-      .object({
-        sourceId: z.string().uuid(),
-        outputLanguage: lang,
-        base64: z.string().min(100).optional(),
-        mimeType: z.string().min(3).optional(),
-      })
-      .parse(d),
+    z.object({ sourceId: z.string().uuid(), outputLanguage: lang }).parse(d),
   )
   .handler(async ({ data, context }) => {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
     const { advanceAnalysis: advance } = await import("./pipeline.server");
-    return advance(context.supabase, context.userId, data);
+    const authHeader = getRequestHeader("authorization") ?? undefined;
+    return advance(context.supabase, context.userId, { ...data, authHeader });
   });
 
 export const retrySource = createServerFn({ method: "POST" })
