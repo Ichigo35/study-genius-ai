@@ -331,16 +331,33 @@ async function callModelOnce(
       clearTimeout(timer);
     }
 
+    // Reading the body can itself drop ("Network connection lost") on a shaky
+    // link / cross-region hop — treat that as a retryable transient, not a
+    // chain-killing unknown error.
+    let bodyText: string;
+    try {
+      bodyText = await res.text();
+    } catch {
+      lastError = new GeminiError("network", "Connexion au service AI interrompue.", 503);
+      await sleep(800 * (attempt + 1));
+      continue;
+    }
+
     if (res.ok) {
-      const json = (await res.json()) as {
+      let json: {
         candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
       };
+      try {
+        json = JSON.parse(bodyText);
+      } catch {
+        throw new GeminiError("empty", "Réponse AI illisible.", 502);
+      }
       const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
       if (!text.trim()) throw new GeminiError("empty", "Réponse AI vide ou invalide.", 502);
       return text;
     }
 
-    const raw = await res.text();
+    const raw = bodyText;
     if (res.status === 429) {
       console.error(`[gemini] 429 (model=${model}): ${raw.slice(0, 500)}`);
       // Free-tier daily cap (e.g. 20 req/day on gemini-3.6-flash) — retrying is
@@ -565,9 +582,11 @@ const STUDY_SYSTEM =
 // already fast enough. Structuring happens later in `generateStudyNotes`.
 const MULTIMODAL_OPTS = {
   kind: "multimodal" as const,
-  retries: 0,
-  timeoutMs: 100_000,
-  totalBudgetMs: 220_000,
+  // 1 retry: the Laos↔US relay hop drops mid-response sometimes; the file is
+  // already in memory so a retry only re-sends Worker→relay (cheap).
+  retries: 1,
+  timeoutMs: 110_000,
+  totalBudgetMs: 240_000,
   temperature: 0.2,
 } satisfies Partial<CallOpts>;
 
