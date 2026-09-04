@@ -58,6 +58,13 @@ a static export — a static build would break every Gemini-backed feature.
   `startMedia` + new `advanceAnalysis` server fn; new
   `src/lib/analysisDrive.ts`. See "Client analysis flow — stepped pipeline".
   APK unchanged (live URL via `server.url`).
+- **2026-09-04 — Gemini timeout + wider chain. NOT YET DEPLOYED.** Fixes the
+  analysis hanging for ~5 min on "Transcription" when the free-tier quota is
+  exhausted. Per-attempt `AbortController` timeout, chain budget, `retries:0`
+  for uploads, chain extended with `gemini-2.0-flash` / `-lite` (~200/day).
+  Elapsed timer in `AnalysisProgress`. **The free tier was genuinely used up
+  that day — enabling billing on the key is still the durable fix.** Needs
+  the user to `npx nitro deploy --prebuilt`.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
@@ -167,16 +174,23 @@ Ne s'applique pas aux simples questions ou explorations.
   autorisée" in the app (this exact bug, fixed 2026-09-03).
 - **Model fallback chain.** `MODELS.text` / `MODELS.multimodal` are *lists*
   (comma-separated `GEMINI_MODEL_TEXT` / `GEMINI_MODEL_MULTIMODAL` env
-  override; default `gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash-lite`).
-  `callGemini` walks the chain: on 429 (quota/rate), 404 (model retired),
-  5xx (overload) or network error it automatically retries the same request
-  on the next model. Only 400/401/403 (bad request / auth) short-circuit.
-  Verified 2026-09-03: 3.6-flash out of daily quota → auto-fell back to
-  3.5-flash, analysis succeeded.
-- Each model has its **own** ~20 req/day free-tier quota, so the chain also
-  multiplies free-tier headroom. `gemini-2.5-flash` (exact) is unusable —
-  404 "no longer available to new users" — but `2.5-flash-lite`,
-  `3.5-flash`, `gemini-flash-latest`, `gemini-flash-lite-latest` all work.
+  override; default = `gemini-3.6-flash, gemini-3.5-flash, gemini-2.5-flash-lite,
+  gemini-2.0-flash, gemini-2.0-flash-lite, gemini-flash-latest,
+  gemini-flash-lite-latest`). `callGemini` walks the chain: on 429
+  (quota/rate), 404 (model retired), 5xx (overload), **per-attempt timeout**
+  or network error it moves to the next model. Only 400/401/403 (bad request
+  / auth) short-circuit.
+- **Timeouts (2026-09-04).** Every Gemini `fetch` has an `AbortController`
+  timeout (`CallOpts.timeoutMs`, default 70s; 115s for the big
+  transcription/OCR uploads) plus an overall chain budget
+  (`totalBudgetMs`, default 150s; 170s for transcription). This is what fixed
+  the analysis hanging for minutes on "Transcription". `transcribeAudio` /
+  `transcribeVideo` / `analyzeImage` also use `retries: 0` — never re-upload
+  15–20 MB to a model that just 429'd, just fall down the chain.
+- Each *distinct* model version has its **own** free-tier bucket. The 3.x
+  previews are ~20 req/day; `gemini-2.0-flash` / `-lite` are ~200/day, so
+  they're the real headroom in the chain. `gemini-2.5-flash` (exact) is
+  unusable — 404 "no longer available to new users".
 - The Worker secret `GEMINI_API_KEY` is set via
   `wrangler secret put GEMINI_API_KEY --name ichigo35-study-genius-ai`. The
   code trims surrounding quotes/whitespace defensively.
