@@ -93,9 +93,7 @@ a static export — a static build would break every Gemini-backed feature.
   - Code reads it per-call (`apiBase()` in `gemini.server.ts`); unset = call
     Google directly. A geo-block response short-circuits the chain with
     `GeminiError("geo_blocked")`.
-  - **Still pending: the user must `bun run build && npx nitro deploy
-    --prebuilt`** to ship the code that reads the new secret (deployed
-    `984ffb13` predates it).
+  - **LIVE** — version `20a83356` ships the code that reads `GEMINI_API_BASE`.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
