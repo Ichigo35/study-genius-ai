@@ -83,14 +83,19 @@ a static export — a static build would break every Gemini-backed feature.
   — Google geo-blocks the Cloudflare Worker's egress IP. The stepped
   pipeline / timeout / model-name work above was all real but secondary.
   **Fix = route Gemini through a Cloudflare AI Gateway** (`google-ai-studio`
-  provider) so the upstream call leaves from a supported region:
-  1. Cloudflare dashboard → AI → AI Gateway → Create Gateway, name it
-     `study-genius` (account id `34cf747a1eaf3858a49e4fafaf9580e0`).
-  2. `printf %s "https://gateway.ai.cloudflare.com/v1/34cf747a1eaf3858a49e4fafaf9580e0/study-genius/google-ai-studio/v1beta" | npx wrangler secret put GEMINI_API_BASE --name ichigo35-study-genius-ai`
-  3. `bun run build && npx nitro deploy --prebuilt`
-  Code reads `GEMINI_API_BASE` per-call (`apiBase()` in `gemini.server.ts`);
-  unset = call Google directly. A geo-block response short-circuits the chain
-  with `GeminiError("geo_blocked")`.
+  provider) so the upstream call leaves from a supported region. **Done:**
+  - AI Gateway **`study-genius`** created (account
+    `34cf747a1eaf3858a49e4fafaf9580e0`), *Authenticated Gateway* toggled OFF
+    (our Worker calls it with a plain `fetch` + the Gemini key, no
+    `cf-aig-authorization`). Logs on, cache off.
+  - Worker secret **`GEMINI_API_BASE`** =
+    `https://gateway.ai.cloudflare.com/v1/34cf747a1eaf3858a49e4fafaf9580e0/study-genius/google-ai-studio/v1beta`
+  - Code reads it per-call (`apiBase()` in `gemini.server.ts`); unset = call
+    Google directly. A geo-block response short-circuits the chain with
+    `GeminiError("geo_blocked")`.
+  - **Still pending: the user must `bun run build && npx nitro deploy
+    --prebuilt`** to ship the code that reads the new secret (deployed
+    `984ffb13` predates it).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
