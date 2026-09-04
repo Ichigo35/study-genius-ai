@@ -98,7 +98,7 @@ a static export — a static build would break every Gemini-backed feature.
     geo-block); logged request location is "Vientiane Prefecture" → **the user
     is in Laos**, which Gemini doesn't support directly.
 
-- **2026-09-04 — Storage upload + background execution. NOT YET DEPLOYED.**
+- **2026-09-04 — Storage upload + background execution. LIVE (version 8285d8a0).**
   Even with the gateway, the Lao mobile link can't hold one request long
   enough to upload a 7.5 MB PDF *and* await transcription — `wrangler tail`
   showed the `advance` request `Canceled` after ~5s, killing the Worker
