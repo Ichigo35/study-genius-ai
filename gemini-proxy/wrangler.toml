@@ -1,0 +1,9 @@
+name = "gemini-proxy"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# Pin execution to a US region so fetch() to the Gemini API egresses from the
+# US — the free API geo-blocks Laos otherwise. Available on all Workers plans.
+[placement]
+region = "aws:us-east-1"
