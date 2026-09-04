@@ -29,9 +29,21 @@ a static export — a static build would break every Gemini-backed feature.
 - Live URL: `https://ichigo35-study-genius-ai.ichigo35.workers.dev` — this is
   what `capacitor.config.ts`'s `server.url` points at.
 - Worker secrets already set: `GEMINI_API_KEY`, `SUPABASE_URL`,
-  `SUPABASE_PUBLISHABLE_KEY`. To redeploy after a code change:
-  `bun run build && npx nitro deploy --prebuilt`, then if `server.url`
-  changes, `npx cap sync android` and rebuild the APK.
+  `SUPABASE_PUBLISHABLE_KEY`. (`GEMINI_API_BASE` was set then **deleted** —
+  the AI-Gateway relay idea didn't pan out; see the geo-block saga below.)
+- **Redeploy after a code change (agent can't run `nitro deploy` — sandbox
+  classifier; the user runs it):**
+  `bun run build && node scripts/patch-placement.mjs && npx nitro deploy
+  --prebuilt`. The `patch-placement.mjs` step re-injects
+  `placement.region = "aws:us-east-1"` into the Nitro-generated
+  `.output/server/wrangler.json` (needed so the Worker's Gemini calls for
+  chat/flashcards/quiz aren't geo-blocked from Laos). If `server.url` ever
+  changes: `npx cap sync android` + rebuild the APK.
+- **Edge Function** `process-source` is deployed via
+  `mcp__supabase__deploy_edge_function` (source in
+  `supabase/functions/process-source/index.ts`). It reads
+  `SUPABASE_SERVICE_ROLE_KEY` (auto) and the Gemini key from
+  `public.app_secrets` (or the Worker's `x-gemini-key` header).
 - Build a debug APK: `cd android && ./gradlew assembleDebug` (needs
   `ANDROID_HOME`/`ANDROID_SDK_ROOT` set — SDK lives at
   `~/Library/Android/sdk`). Output:
@@ -269,6 +281,13 @@ Ne s'applique pas aux simples questions ou explorations.
 
 ## Gemini API (`src/lib/gemini.server.ts`)
 
+> **Scope:** `gemini.server.ts` on the Worker now only serves **chat /
+> flashcards / quiz** (`runChat` / `runFlashcards` / `runQuiz`). The
+> **analysis** path (transcription + study notes) moved to the
+> `process-source` Supabase Edge Function — see "Analysis flow" below and the
+> "analysis WORKS from Laos" deploy entry. The Worker's own Gemini calls work
+> because the Worker is pinned to `aws:us-east-1` (`placement.region`).
+
 - **Auth:** always send the key as the `x-goog-api-key` header. Do **not** use
   `Authorization: Bearer` (that's for OAuth2 access tokens only) and don't
   gate on the key prefix — Google now issues keys as `AQ.…` as well as the
@@ -314,48 +333,55 @@ Ne s'applique pas aux simples questions ou explorations.
   is cheap. When every model in the chain is quota-capped, the app shows the
   `quota_free_tier` message pointing there.
 
-### Client analysis flow — stepped pipeline (2026-09-04, rewrite)
+### Analysis flow — Worker kicks a Supabase Edge Function (current, 2026-09-04)
 
-The old flow (one long synchronous server fn + a fake 9s progress ticker +
-180s client race) is **gone**. It kept timing out on the client / Worker with
-the progress bar frozen on "Éléments de révision" while the run either died or
-finished invisibly.
+The whole reason this is complicated: **the user is in Laos, where Google
+geo-blocks the free Gemini API**, and the Cloudflare Worker's own free-plan
+limits (`waitUntil` killed at ~30 s) can't run a 60–120 s transcription. See
+the big "analysis WORKS from Laos" entry under *Current deployment* for the
+full story. End state:
 
-Now the pipeline is **split into short, client-driven steps** (see the big
-comment block in `pipeline.server.ts`):
+1. **`start{YouTube,Text,Media}Analysis`** (`start*` server fns in
+   `ai.functions.ts` → `pipeline.server.ts`) — quota-check + insert the
+   `sources` row, return `{ ok, sourceId }` instantly. `startMedia` also sets
+   `storage_path`.
+2. **Client uploads media once to Supabase Storage** (`study-uploads` bucket,
+   `MediaAnalyzer.tsx` `uploadWithRetry`), then navigates to
+   `/sources/$sourceId`. Text/YouTube skip the upload.
+3. **`advanceAnalysis({ sourceId, outputLanguage })`** on the Worker is a
+   **thin kicker**: if a step is pending (or a `*_running` claim is stale) it
+   POSTs `{ sourceId }` + `x-gemini-key` (+ the forwarded user JWT) to the
+   `process-source` Edge Function and returns `processing` fast. The client
+   (`sources.$sourceId.tsx` `driveAnalysis` + the 4 s `useQuery` poll) keeps
+   calling it until `completed` / `failed`.
+4. **`supabase/functions/process-source`** (Deno, Singapore, `verify_jwt:
+   false`) does ONE step per invocation via `EdgeRuntime.waitUntil`:
+   downloads the upload from Storage, calls Gemini **directly** (no geo-block
+   from Singapore, `thinkingBudget: 0`, `FAST_CHAIN`), writes
+   `transcripts` / `study_notes`, records `usage_events`, advances
+   `progress_step`. Gemini key comes from the header or `public.app_secrets`.
+5. **`pg_cron` backstop** (`supabase/setup-processor-cron.sql`, run in the
+   dashboard) kicks `process-source` every minute for stuck sources — covers
+   the app closing mid-run.
 
-- `startYouTubeAnalysis` / `startTextAnalysis` / `startMediaAnalysis`
-  (`start*` server fns in `ai.functions.ts`) — validate + quota-check +
-  insert the `sources` row, return `{ ok, sourceId }` **instantly**, no
-  Gemini call. `startMedia` no longer receives the base64.
-- `advanceAnalysis({ sourceId, outputLanguage, base64?, mimeType? })` — does
-  **exactly one** Gemini call (transcription **or** note generation) then
-  returns `{ status, step }`. Never two back-to-back long calls in one request.
-- `src/lib/analysisDrive.ts` → `driveAnalysis()` loops `advanceAnalysis` until
-  `completed` / `failed`. Called from `MediaAnalyzer.tsx`, `add.youtube.tsx`,
-  `add.text.tsx` (with real progress on screen) **and** from
-  `sources.$sourceId.tsx` (a `useEffect` that resumes any `processing` source
-  on open). `AnalysisProgress` now renders the real `progress_step`.
-
-`progress_step` state machine:
+`progress_step` state machine (unchanged):
 `transcript_pending → transcript_running → notes_pending → notes_running → done`
-(text sources start at `notes_pending`). `*_running` is an **atomic
-compare-and-set claim** (`claimStep`, via a PostgREST `.or()` on
-`progress_step` + `updated_at`); a claim untouched for `STEP_CLAIM_STALE_MS`
-(4 min) is re-claimable, so an interrupted run self-heals before
-`reclaimStaleSources` (10 min) hard-fails it. Steps are idempotent (delete
-transcript/notes before re-insert).
+(text starts at `notes_pending`). `claimStep` (in the Edge Function) is an
+atomic compare-and-set via a PostgREST `.or()` on `progress_step` +
+`updated_at`; stale after `STEP_CLAIM_STALE_MS` (4 min). `reclaimStaleSources`
+(`src/lib/sources.ts`, client-side) still hard-fails `processing` rows older
+than 10 min. Steps delete transcript/notes before re-insert (idempotent).
 
-**Media uploads are still not persisted** — only `MediaAnalyzer` holds the
-base64 (it sends it on the `transcript_*` step only). If that page is closed
-mid-transcription the file is lost: after 4 min the source page's driver, or a
-`retrySource`, returns `needs_reupload` → UI sends the user to `/add`.
+**Uploads are deleted from Storage once the transcript is saved.** A media
+source that failed before a transcript existed → `retryAnalysis` /
+`process-source` returns `needs_reupload` → UI sends the user to `/add`.
+`retryAnalysis` just clears the error + resets `progress_step`; the
+source-page driver (and the cron) pick it up.
 
-**Retry (2026-09-04).** `retryAnalysis` is now tiny: it just clears the error
-and resets `progress_step` (`notes_pending` if a transcript/`raw_text`
-survived, else `transcript_pending` for YouTube); the source page's driver
-picks it up. `reclaimStaleSources` (`src/lib/sources.ts`) still flags
-`processing` rows older than 10 min as `failed`.
+`src/lib/analysisDrive.ts` `driveAnalysis()` / `study.server.ts`
+`runInBackground()` still exist but the Worker no longer runs Gemini for
+analysis — `runInBackground` (Worker `waitUntil`) proved unreliable on the
+free plan.
 
 **Deleting sources & courses (2026-09-04).** `deleteSource` / `deleteSpace`
 in `src/lib/sources.ts` — plain client-side Supabase deletes (RLS `FOR ALL`
