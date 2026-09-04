@@ -65,7 +65,8 @@ a static export — a static build would break every Gemini-backed feature.
   extended with `gemini-2.0-flash` / `-lite` (~200/day). Elapsed timer in
   `AnalysisProgress`. **The free tier was genuinely used up that day —
   enabling billing on the key is still the durable fix.**
-- **2026-09-04 — transcription speed rewrite. NOT YET DEPLOYED.** Live
+- **2026-09-04 — transcription speed rewrite. LIVE** (version `63dc450d`,
+  deployed by the user). Live
   `wrangler tail` showed the transcription step walking the *whole* chain
   with every model timing out: "thinking" models take minutes on a big
   PDF/audio payload. Fixes: separate `DEFAULT_MULTIMODAL_CHAIN` (fast lite
@@ -75,8 +76,7 @@ a static export — a static build would break every Gemini-backed feature.
   400-retry-without-it), transcription budget cut to 85s/attempt · 130s total
   so it fits one mobile HTTP request, simplified "extract raw text" prompts,
   `generateStudyNotes` capped at 200k chars. A base64-less resume driver
-  fails a stuck media transcript after 150s. Needs `npx nitro deploy
-  --prebuilt`.
+  fails a stuck media transcript after 150s.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
