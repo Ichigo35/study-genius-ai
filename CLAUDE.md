@@ -136,8 +136,37 @@ a static export — a static build would break every Gemini-backed feature.
     backstop is needed (TanStack's `new H3Event(request)` may drop the CF
     execution context).
   - Add screens just start + navigate now; the source page poll + driver runs
-    the rest. `thinkingConfig` dropped from transcription (3.5-flash-lite
-    400s on it). `STEP_CLAIM_STALE_MS` 4→6 min.
+    the rest.
+
+- **2026-09-04 — analysis WORKS from Laos. Architecture: Supabase Edge
+  Function.** (Worker `8a2db6a2` + edge fn `process-source` v4.) The chain of
+  failures and what actually fixed each:
+  1. **Gemini geo-blocks Laos** on the free AI Studio API. AI Gateway did NOT
+     help. → the analysis Gemini calls now run in a **Supabase Edge Function**
+     (`supabase/functions/process-source`) in `ap-southeast-1` (Singapore,
+     which Gemini serves). The Worker's `advanceAnalysis` is a thin kicker: it
+     POSTs `{sourceId}` + `x-gemini-key` (+ user JWT) to the edge fn, which
+     acks in ~1 s and works via `EdgeRuntime.waitUntil`. `verify_jwt: false`;
+     the key is stashed in `public.app_secrets` for the cron.
+  2. **Free-plan Worker `waitUntil` is killed at ~30 s** — that's why
+     transcription couldn't run on the Worker. The edge fn's budget is
+     ~100–130 s, enough.
+  3. **"Thinking" made the notes step take 11 min** on a 52 KB transcript.
+     → `thinkingConfig.thinkingBudget = 0` on every edge-fn call (with a
+     graceful retry when a model 400s on it). Notes now ~6 s.
+     `FAST_CHAIN` = `gemini-3.5-flash-lite, flash-lite-latest, flash-latest,
+     3.5-flash`; notes input capped at 60 KB.
+  4. **Worker still runs `[placement] region = "aws:us-east-1"`**
+     (`scripts/patch-placement.mjs`, run after `bun run build`) so chat /
+     flashcards / quiz — still Gemini-from-Worker — aren't geo-blocked.
+     `GEMINI_API_BASE` secret was deleted (direct Google from us-east-1).
+  - **`gemini-proxy` (`~/gemini-proxy`, US-pinned relay) is now UNUSED** —
+     kept deployed as a spare. `GEMINI_API_BASE` unset means it isn't hit.
+  - **Still to do (needs the user — logged-in Supabase dashboard):** run
+     `supabase/setup-processor-cron.sql` — a `pg_cron` job that kicks
+     `process-source` every minute for any stuck analysis, so the pipeline
+     finishes even if the app stops polling. Without it, the app must stay on
+     the source page while each step runs (~30 s each now, so usually fine).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
