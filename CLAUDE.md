@@ -58,13 +58,13 @@ a static export — a static build would break every Gemini-backed feature.
   `startMedia` + new `advanceAnalysis` server fn; new
   `src/lib/analysisDrive.ts`. See "Client analysis flow — stepped pipeline".
   APK unchanged (live URL via `server.url`).
-- **2026-09-04 — Gemini timeout + wider chain. NOT YET DEPLOYED.** Fixes the
-  analysis hanging for ~5 min on "Transcription" when the free-tier quota is
-  exhausted. Per-attempt `AbortController` timeout, chain budget, `retries:0`
-  for uploads, chain extended with `gemini-2.0-flash` / `-lite` (~200/day).
-  Elapsed timer in `AnalysisProgress`. **The free tier was genuinely used up
-  that day — enabling billing on the key is still the durable fix.** Needs
-  the user to `npx nitro deploy --prebuilt`.
+- **2026-09-04 — Gemini timeout + wider chain. LIVE** (version `88d0dd2f`,
+  deployed by the user). Fixes the analysis hanging for ~5 min on
+  "Transcription" when the free-tier quota is exhausted. Per-attempt
+  `AbortController` timeout, chain budget, `retries:0` for uploads, chain
+  extended with `gemini-2.0-flash` / `-lite` (~200/day). Elapsed timer in
+  `AnalysisProgress`. **The free tier was genuinely used up that day —
+  enabling billing on the key is still the durable fix.**
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
