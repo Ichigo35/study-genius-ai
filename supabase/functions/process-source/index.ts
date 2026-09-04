@@ -388,15 +388,35 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: "bad json" }), { status: 400 });
   }
   const sourceId = payload.sourceId;
-  const key = req.headers.get("x-gemini-key");
-  if (!sourceId || !key) {
-    return new Response(JSON.stringify({ error: "missing sourceId or x-gemini-key" }), {
+  if (!sourceId) {
+    return new Response(JSON.stringify({ error: "missing sourceId" }), {
       status: 400,
       headers: { "content-type": "application/json" },
     });
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+  // The Gemini key comes from the Worker's header. Stash it so the pg_cron
+  // backstop (which has no key) can reuse it.
+  let key = req.headers.get("x-gemini-key") ?? "";
+  if (key) {
+    await supabase.from("app_secrets").upsert({ key: "gemini_api_key", value: key });
+  } else {
+    const { data } = await supabase
+      .from("app_secrets")
+      .select("value")
+      .eq("key", "gemini_api_key")
+      .maybeSingle();
+    key = data?.value ?? "";
+  }
+  if (!key) {
+    return new Response(JSON.stringify({ error: "no gemini key available" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
   const work = processStep(supabase, sourceId, payload.outputLanguage ?? "same", key).catch((e) =>
     console.error("[process-source] uncaught:", e),
   );
