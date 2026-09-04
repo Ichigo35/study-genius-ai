@@ -1,19 +1,29 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { AlertTriangle, Loader2, Search } from "lucide-react";
+import { AlertTriangle, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/i18n";
+import { useSettings } from "@/hooks/useSettings";
 import { PageHeader } from "@/components/PageHeader";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { NoteView, type NoteContent } from "@/components/NoteView";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { retrySource } from "@/lib/ai.functions";
+import { deleteSource, reclaimStaleSources } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/sources/$sourceId")({
   head: () => ({
     meta: [
       { title: "Fiche de synthèse — StudyLoop" },
-      { name: "description", content: "Résumé, points clés, concepts et transcription de ta source de cours." },
+      {
+        name: "description",
+        content: "Résumé, points clés, concepts et transcription de ta source de cours.",
+      },
       { property: "og:title", content: "Fiche de synthèse — StudyLoop" },
       { property: "og:description", content: "Tout ton cours résumé et structuré par l'IA." },
     ],
@@ -33,8 +43,9 @@ async function fetchSource(sourceId: string) {
       .maybeSingle(),
     supabase.from("transcripts").select("full_text").eq("source_id", sourceId).maybeSingle(),
   ]);
+  const [reclaimed] = source.data ? await reclaimStaleSources([source.data]) : [null];
   return {
-    source: source.data,
+    source: reclaimed,
     note: note.data,
     transcript: transcript.data?.full_text ?? "",
   };
@@ -43,8 +54,14 @@ async function fetchSource(sourceId: string) {
 function SourcePage() {
   const { sourceId } = Route.useParams();
   const { t } = useI18n();
+  const { settings } = useSettings();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<"note" | "transcript">("note");
   const [search, setSearch] = useState("");
+
+  const runRetry = useServerFn(retrySource);
+  const outputLanguage = settings?.ai_output_language ?? "same";
 
   const query = useQuery({
     queryKey: ["source", sourceId],
@@ -52,10 +69,44 @@ function SourcePage() {
     refetchInterval: (q) => (q.state.data?.source?.status === "processing" ? 4000 : false),
   });
 
+  const retryMutation = useMutation({
+    mutationFn: async () => runRetry({ data: { sourceId, outputLanguage } }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries();
+      if (!result.ok) {
+        if (result.error?.code === "needs_reupload") {
+          toast.error(t("source.needsReupload"));
+          navigate({ to: "/add" });
+          return;
+        }
+        toast.error(result.error?.message ?? t("error.generic"));
+      }
+    },
+    onError: () => toast.error(t("error.generic")),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const spaceId = query.data?.source?.space_id as string | undefined;
+      await deleteSource(sourceId);
+      return spaceId;
+    },
+    onSuccess: (spaceId) => {
+      queryClient.invalidateQueries();
+      toast.success(t("source.deleted"));
+      if (spaceId) navigate({ to: "/spaces/$spaceId", params: { spaceId } });
+      else navigate({ to: "/spaces" });
+    },
+    onError: () => toast.error(t("error.generic")),
+  });
+
   const data = query.data;
+  const status = data?.source?.status;
   const note = data?.note?.content as NoteContent | undefined;
   const lines = data?.transcript
-    ? data.transcript.split(/\n+/).filter((l: string) => l.toLowerCase().includes(search.toLowerCase()))
+    ? data.transcript
+        .split(/\n+/)
+        .filter((l: string) => l.toLowerCase().includes(search.toLowerCase()))
     : [];
 
   return (
@@ -75,19 +126,35 @@ function SourcePage() {
         }
       />
       <main className="space-y-4 px-5">
-        {query.isLoading && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
+        {query.isLoading && (
+          <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />
+        )}
 
-        {data?.source?.status === "processing" && (
+        {status === "processing" && (
           <div className="card-soft flex items-center gap-2 p-4 text-sm">
             <Loader2 className="size-4 animate-spin text-primary" />
             {t("status.processing")}
           </div>
         )}
 
-        {data?.source?.status === "failed" && (
-          <div className="card-soft flex items-start gap-2 border-destructive/30 p-4 text-sm">
-            <AlertTriangle className="mt-0.5 size-4 text-destructive" />
-            <span>{data.source.error_message ?? t("error.generic")}</span>
+        {status === "failed" && (
+          <div className="card-soft space-y-3 border-destructive/30 p-4 text-sm">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+              <span>{data?.source?.error_message ?? t("error.generic")}</span>
+            </div>
+            <Button
+              className="h-10 w-full rounded-xl"
+              disabled={retryMutation.isPending}
+              onClick={() => retryMutation.mutate()}
+            >
+              {retryMutation.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 size-4" />
+              )}
+              {retryMutation.isPending ? t("source.retrying") : t("source.retry")}
+            </Button>
           </div>
         )}
 
@@ -99,7 +166,9 @@ function SourcePage() {
                 onClick={() => setTab(key)}
                 className={cn(
                   "press rounded-full px-4 py-1.5 text-sm font-medium",
-                  tab === key ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground",
+                  tab === key
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-secondary-foreground",
                 )}
               >
                 {t(`source.tab.${key}` as const)}
@@ -113,7 +182,7 @@ function SourcePage() {
             <NoteView note={note} />
           ) : (
             !query.isLoading &&
-            data?.source?.status === "completed" && (
+            status === "completed" && (
               <p className="text-sm text-muted-foreground">{t("source.empty")}</p>
             )
           ))}
@@ -134,6 +203,25 @@ function SourcePage() {
                 <p key={i}>{line}</p>
               ))}
             </div>
+          </div>
+        )}
+
+        {data?.source && (
+          <div className="pt-2">
+            <ConfirmDelete
+              title={t("source.deleteConfirm")}
+              pending={deleteMutation.isPending}
+              onConfirm={() => deleteMutation.mutate()}
+              trigger={
+                <Button
+                  variant="ghost"
+                  className="h-10 w-full rounded-xl text-destructive hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="mr-2 size-4" />
+                  {t("source.delete")}
+                </Button>
+              }
+            />
           </div>
         )}
       </main>

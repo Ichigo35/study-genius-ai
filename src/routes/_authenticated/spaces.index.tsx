@@ -1,10 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Plus, ChevronRight, Loader2 } from "lucide-react";
+import { Plus, ChevronRight, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { createSpace, fetchSpaceCounts, fetchSpaces } from "@/lib/spaces";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { createSpace, fetchSpaceCounts, fetchSpaces, type StudySpace } from "@/lib/spaces";
+import { deleteSpace } from "@/lib/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,7 +91,8 @@ export function NewSpaceDialog({ onCreated }: { onCreated?: (id: string) => void
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="space-desc">
-              {t("space.description")} <span className="text-muted-foreground">({t("common.optional")})</span>
+              {t("space.description")}{" "}
+              <span className="text-muted-foreground">({t("common.optional")})</span>
             </Label>
             <Textarea
               id="space-desc"
@@ -114,6 +117,62 @@ export function NewSpaceDialog({ onCreated }: { onCreated?: (id: string) => void
   );
 }
 
+function SpaceRow({
+  space,
+  count,
+  onDeleted,
+}: {
+  space: StudySpace;
+  count: number;
+  onDeleted: () => void;
+}) {
+  const { t } = useI18n();
+  const mutation = useMutation({
+    mutationFn: () => deleteSpace(space.id),
+    onSuccess: () => {
+      toast.success(t("space.deleted"));
+      onDeleted();
+    },
+    onError: () => toast.error(t("error.generic")),
+  });
+
+  return (
+    <div className="press card-soft flex items-center gap-3 p-4">
+      <Link
+        to="/spaces/$spaceId"
+        params={{ spaceId: space.id }}
+        className="flex min-w-0 flex-1 items-center gap-3"
+      >
+        <span className="flex size-11 items-center justify-center rounded-xl bg-secondary text-xl">
+          {space.emoji}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-semibold">{space.name}</span>
+          <span className="block text-xs text-muted-foreground">
+            {t("space.documents", { n: count })} ·{" "}
+            {new Date(space.last_activity_at).toLocaleDateString()}
+          </span>
+        </span>
+        <ChevronRight className="size-5 text-muted-foreground" />
+      </Link>
+      <ConfirmDelete
+        title={t("space.deleteConfirm")}
+        pending={mutation.isPending}
+        onConfirm={() => mutation.mutate()}
+        trigger={
+          <button
+            type="button"
+            aria-label={t("space.delete")}
+            className="press flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-destructive"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        }
+      />
+    </div>
+  );
+}
+
 function SpacesPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -128,33 +187,28 @@ function SpacesPage() {
     <main className="safe-top px-5 pt-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("nav.spaces")}</h1>
-        <NewSpaceDialog onCreated={(id) => navigate({ to: "/spaces/$spaceId", params: { spaceId: id } })} />
+        <NewSpaceDialog
+          onCreated={(id) => navigate({ to: "/spaces/$spaceId", params: { spaceId: id } })}
+        />
       </div>
 
       <div className="mt-5 space-y-3">
         {spaces.isLoading && <div className="h-20 animate-pulse rounded-2xl bg-muted" />}
         {spaces.data?.length === 0 && (
-          <div className="card-soft p-6 text-center text-sm text-muted-foreground">{t("home.noSpaces")}</div>
+          <div className="card-soft p-6 text-center text-sm text-muted-foreground">
+            {t("home.noSpaces")}
+          </div>
         )}
         {spaces.data?.map((space) => (
-          <Link
+          <SpaceRow
             key={space.id}
-            to="/spaces/$spaceId"
-            params={{ spaceId: space.id }}
-            className="press card-soft flex items-center gap-3 p-4"
-          >
-            <span className="flex size-11 items-center justify-center rounded-xl bg-secondary text-xl">
-              {space.emoji}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-semibold">{space.name}</span>
-              <span className="block text-xs text-muted-foreground">
-                {t("space.documents", { n: counts.data?.[space.id] ?? 0 })} ·{" "}
-                {new Date(space.last_activity_at).toLocaleDateString()}
-              </span>
-            </span>
-            <ChevronRight className="size-5 text-muted-foreground" />
-          </Link>
+            space={space}
+            count={counts.data?.[space.id] ?? 0}
+            onDeleted={() => {
+              spaces.refetch();
+              counts.refetch();
+            }}
+          />
         ))}
       </div>
     </main>

@@ -44,6 +44,15 @@ a static export — a static build would break every Gemini-backed feature.
 - Redeployed 2026-09-03 with the Gemini auth/model fix + model fallback chain
   (see "Gemini API" section); latest version `9575de0b`. `GEMINI_API_KEY`
   secret rotated to the current `AQ.…`-format key.
+- **2026-09-04 — retry / delete for analyses + delete courses (needs deploy).**
+  Added `retrySource` server fn (`src/lib/ai.functions.ts` →
+  `retryAnalysis` in `pipeline.server.ts`), and client helpers in
+  `src/lib/sources.ts` (`reclaimStaleSources`, `deleteSource`,
+  `deleteSpace`). The agent's `npx nitro deploy --prebuilt` was blocked by
+  the sandbox classifier — **the user must run
+  `bun run build && npx nitro deploy --prebuilt` for any of this to go
+  live** (client bundle is served by the Worker, so nothing ships until
+  then). APK unchanged (loads the live URL via `server.url`).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
@@ -182,6 +191,23 @@ one long synchronous server fn call. Capped with a 180s client timeout so it
 can't spin forever, but the proper fix is to fire-and-navigate to
 `/sources/$sourceId` and poll `sources.status` / `progress_step` (already
 written by `pipeline.server.ts`).
+
+**Interrupted analyses & retry (2026-09-04).** If the Worker is killed or the
+connection drops mid-run, the `sources` row stays `processing` forever with no
+error. `reclaimStaleSources` (`src/lib/sources.ts`, called from the space and
+source pages) flags any `processing` row older than 10 min as `failed`. The
+source page then shows a **"Relancer l'analyse"** button → `retrySource`
+server fn → `retryAnalysis` (`pipeline.server.ts`), which re-runs in place
+reusing whatever input survived: `raw_text` for pasted text, the saved
+transcript for audio/video/docs, `original_url` for YouTube. Uploaded files
+are **not** stored, so a media source that failed before a transcript existed
+returns `needs_reupload` and the UI sends the user back to `/add`.
+
+**Deleting sources & courses (2026-09-04).** `deleteSource` / `deleteSpace`
+in `src/lib/sources.ts` — plain client-side Supabase deletes (RLS `FOR ALL`
+covers it; FK `ON DELETE CASCADE` cleans up transcripts/notes/flashcards/
+quizzes/chat). UI: trash button + `ConfirmDelete` (`AlertDialog` wrapper) on
+the source page, the space page header, and each row of the courses list.
 
 ## Browser automation
 

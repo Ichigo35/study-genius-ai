@@ -16,7 +16,12 @@ export const analyzeYouTube = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
-      .object({ spaceId: z.string().uuid(), url: z.string().min(5), detailLevel: detail, outputLanguage: lang })
+      .object({
+        spaceId: z.string().uuid(),
+        url: z.string().min(5),
+        detailLevel: detail,
+        outputLanguage: lang,
+      })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
@@ -63,10 +68,26 @@ export const analyzeMedia = createServerFn({ method: "POST" })
     return runMediaAnalysis(context.supabase, context.userId, data);
   });
 
+export const retrySource = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ sourceId: z.string().uuid(), outputLanguage: lang }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { retryAnalysis } = await import("./pipeline.server");
+    return retryAnalysis(context.supabase, context.userId, data);
+  });
+
 export const askSpace = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ spaceId: z.string().uuid(), question: z.string().min(1).max(2000), outputLanguage: lang }).parse(d),
+    z
+      .object({
+        spaceId: z.string().uuid(),
+        question: z.string().min(1).max(2000),
+        outputLanguage: lang,
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { runChat } = await import("./pipeline.server");
@@ -76,7 +97,13 @@ export const askSpace = createServerFn({ method: "POST" })
 export const createFlashcards = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ spaceId: z.string().uuid(), count: z.number().int().min(5).max(40), outputLanguage: lang }).parse(d),
+    z
+      .object({
+        spaceId: z.string().uuid(),
+        count: z.number().int().min(5).max(40),
+        outputLanguage: lang,
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { runFlashcards } = await import("./pipeline.server");
@@ -86,7 +113,13 @@ export const createFlashcards = createServerFn({ method: "POST" })
 export const createQuiz = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ spaceId: z.string().uuid(), count: z.number().int().min(5).max(20), outputLanguage: lang }).parse(d),
+    z
+      .object({
+        spaceId: z.string().uuid(),
+        count: z.number().int().min(5).max(20),
+        outputLanguage: lang,
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { runQuiz } = await import("./pipeline.server");

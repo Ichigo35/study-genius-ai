@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { geminiService, GeminiError, type DetailLevel, type StudyNoteContent } from "./gemini.server";
+import {
+  geminiService,
+  GeminiError,
+  type DetailLevel,
+  type StudyNoteContent,
+} from "./gemini.server";
 import {
   assertQuota,
   recordUsage,
@@ -12,7 +17,10 @@ import {
 type DB = SupabaseClient<any, any, any>;
 
 async function touchSpace(supabase: DB, spaceId: string) {
-  await supabase.from("study_spaces").update({ last_activity_at: new Date().toISOString() }).eq("id", spaceId);
+  await supabase
+    .from("study_spaces")
+    .update({ last_activity_at: new Date().toISOString() })
+    .eq("id", spaceId);
 }
 
 async function persistNotes(
@@ -57,7 +65,10 @@ export async function runYouTubeAnalysis(
 ) {
   const videoId = parseYouTubeUrl(data.url);
   if (!videoId) {
-    return { ok: false as const, error: { code: "invalid_url", message: "Ce lien YouTube n'est pas valide." } };
+    return {
+      ok: false as const,
+      error: { code: "invalid_url", message: "Ce lien YouTube n'est pas valide." },
+    };
   }
   await assertQuota(supabase, userId, "video");
   await assertQuota(supabase, userId, "analysis");
@@ -101,10 +112,22 @@ export async function runYouTubeAnalysis(
       full_text: result.transcript,
       language: data.outputLanguage,
     });
-    await persistNotes(supabase, userId, data.spaceId, sourceId, result.notes, data.detailLevel, data.outputLanguage);
+    await persistNotes(
+      supabase,
+      userId,
+      data.spaceId,
+      sourceId,
+      result.notes,
+      data.detailLevel,
+      data.outputLanguage,
+    );
     await supabase
       .from("sources")
-      .update({ status: "completed", progress_step: "done", title: result.notes.title || `YouTube — ${videoId}` })
+      .update({
+        status: "completed",
+        progress_step: "done",
+        title: result.notes.title || `YouTube — ${videoId}`,
+      })
       .eq("id", sourceId);
     await recordUsage(supabase, userId, "video");
     await recordUsage(supabase, userId, "analysis");
@@ -118,7 +141,13 @@ export async function runYouTubeAnalysis(
 export async function runTextAnalysis(
   supabase: DB,
   userId: string,
-  data: { spaceId: string; title: string; text: string; detailLevel: DetailLevel; outputLanguage: string },
+  data: {
+    spaceId: string;
+    title: string;
+    text: string;
+    detailLevel: DetailLevel;
+    outputLanguage: string;
+  },
 ) {
   await assertQuota(supabase, userId, "analysis");
   const { data: source, error } = await supabase
@@ -144,8 +173,19 @@ export async function runTextAnalysis(
       detailLevel: data.detailLevel,
       outputLanguage: data.outputLanguage,
     });
-    await persistNotes(supabase, userId, data.spaceId, sourceId, notes, data.detailLevel, data.outputLanguage);
-    await supabase.from("sources").update({ status: "completed", progress_step: "done" }).eq("id", sourceId);
+    await persistNotes(
+      supabase,
+      userId,
+      data.spaceId,
+      sourceId,
+      notes,
+      data.detailLevel,
+      data.outputLanguage,
+    );
+    await supabase
+      .from("sources")
+      .update({ status: "completed", progress_step: "done" })
+      .eq("id", sourceId);
     await recordUsage(supabase, userId, "analysis");
     await touchSpace(supabase, data.spaceId);
     return { ok: true as const, sourceId };
@@ -191,14 +231,13 @@ export async function runMediaAnalysis(
   const sourceId = source.id as string;
 
   try {
-    const content =
-      isDoc
-        ? await geminiService.analyzeImage({
-            base64: data.base64,
-            mimeType: data.mimeType,
-            outputLanguage: data.outputLanguage,
-          })
-        : await geminiService.transcribeAudio({ base64: data.base64, mimeType: data.mimeType });
+    const content = isDoc
+      ? await geminiService.analyzeImage({
+          base64: data.base64,
+          mimeType: data.mimeType,
+          outputLanguage: data.outputLanguage,
+        })
+      : await geminiService.transcribeAudio({ base64: data.base64, mimeType: data.mimeType });
 
     await supabase.from("transcripts").insert({
       user_id: userId,
@@ -213,7 +252,15 @@ export async function runMediaAnalysis(
       detailLevel: data.detailLevel,
       outputLanguage: data.outputLanguage,
     });
-    await persistNotes(supabase, userId, data.spaceId, sourceId, notes, data.detailLevel, data.outputLanguage);
+    await persistNotes(
+      supabase,
+      userId,
+      data.spaceId,
+      sourceId,
+      notes,
+      data.detailLevel,
+      data.outputLanguage,
+    );
     await supabase
       .from("sources")
       .update({ status: "completed", progress_step: "done", title: notes.title || data.title })
@@ -221,6 +268,118 @@ export async function runMediaAnalysis(
     await recordUsage(supabase, userId, "analysis");
     if (!isDoc) await recordUsage(supabase, userId, "audio_minutes", minutes);
     await touchSpace(supabase, data.spaceId);
+    return { ok: true as const, sourceId };
+  } catch (e) {
+    return fail(supabase, sourceId, e);
+  }
+}
+
+/**
+ * Re-runs a failed (or interrupted) analysis in place, reusing the same `sources`
+ * row. Works from whatever input we still have: `raw_text` for pasted text, the
+ * saved transcript for audio/video/docs, or the original URL for YouTube. Uploaded
+ * files aren't kept, so a media source with no transcript must be re-imported.
+ */
+export async function retryAnalysis(
+  supabase: DB,
+  userId: string,
+  data: { sourceId: string; outputLanguage: string },
+) {
+  const { data: src, error: loadError } = await supabase
+    .from("sources")
+    .select("*")
+    .eq("id", data.sourceId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (loadError) throw new GeminiError("db", loadError.message, 500);
+  if (!src)
+    return { ok: false as const, error: { code: "not_found", message: "Source introuvable." } };
+  if (src.status === "processing") {
+    return {
+      ok: false as const,
+      error: { code: "processing", message: "Une analyse est déjà en cours." },
+    };
+  }
+
+  await assertQuota(supabase, userId, "analysis");
+
+  const sourceId = src.id as string;
+  const spaceId = src.space_id as string;
+  const detailLevel = (src.detail_level ?? "standard") as DetailLevel;
+  const outputLanguage = data.outputLanguage || (src.language as string | null) || "same";
+
+  let content = (src.raw_text as string | null) ?? "";
+  if (!content) {
+    const { data: tr } = await supabase
+      .from("transcripts")
+      .select("full_text")
+      .eq("source_id", sourceId)
+      .maybeSingle();
+    content = tr?.full_text ?? "";
+  }
+  const regenFromUrl = !content && src.type === "youtube" && !!src.original_url;
+  if (!content && !regenFromUrl) {
+    return {
+      ok: false as const,
+      error: { code: "needs_reupload", message: "Réimporte le fichier pour relancer l'analyse." },
+    };
+  }
+
+  await supabase.from("study_notes").delete().eq("source_id", sourceId);
+  await supabase
+    .from("sources")
+    .update({
+      status: "processing",
+      progress_step: regenFromUrl ? "transcribing" : "analyzing",
+      error_message: null,
+    })
+    .eq("id", sourceId);
+
+  try {
+    if (regenFromUrl) {
+      const result = await geminiService.analyzeVideo({
+        url: src.original_url as string,
+        detailLevel,
+        outputLanguage,
+      });
+      await supabase.from("transcripts").delete().eq("source_id", sourceId);
+      await supabase.from("transcripts").insert({
+        user_id: userId,
+        source_id: sourceId,
+        full_text: result.transcript,
+        language: outputLanguage,
+      });
+      await persistNotes(
+        supabase,
+        userId,
+        spaceId,
+        sourceId,
+        result.notes,
+        detailLevel,
+        outputLanguage,
+      );
+      await supabase
+        .from("sources")
+        .update({
+          status: "completed",
+          progress_step: "done",
+          title: result.notes.title || src.title,
+        })
+        .eq("id", sourceId);
+    } else {
+      const notes = await geminiService.generateStudyNotes({
+        content,
+        detailLevel,
+        outputLanguage,
+      });
+      await persistNotes(supabase, userId, spaceId, sourceId, notes, detailLevel, outputLanguage);
+      await supabase
+        .from("sources")
+        .update({ status: "completed", progress_step: "done", title: notes.title || src.title })
+        .eq("id", sourceId);
+    }
+    await recordUsage(supabase, userId, "analysis");
+    await touchSpace(supabase, spaceId);
     return { ok: true as const, sourceId };
   } catch (e) {
     return fail(supabase, sourceId, e);
@@ -248,7 +407,8 @@ export async function runChat(
     .insert({ user_id: userId, space_id: data.spaceId, role: "user", content: data.question });
 
   if (!context.trim()) {
-    const message = "Ce cours ne contient encore aucune source analysée. Ajoute un contenu pour que je puisse t'aider.";
+    const message =
+      "Ce cours ne contient encore aucune source analysée. Ajoute un contenu pour que je puisse t'aider.";
     await supabase
       .from("chat_messages")
       .insert({ user_id: userId, space_id: data.spaceId, role: "assistant", content: message });
@@ -276,16 +436,19 @@ export async function runFlashcards(
 ) {
   await assertQuota(supabase, userId, "analysis");
   const context = await buildSpaceContext(supabase, data.spaceId, 120000);
-  if (!context.trim()) throw new GeminiError("empty_space", "Ajoute d'abord une source à ce cours.", 400);
+  if (!context.trim())
+    throw new GeminiError("empty_space", "Ajoute d'abord une source à ce cours.", 400);
 
   const cards = await geminiService.generateFlashcards({
     content: context,
     count: data.count,
     outputLanguage: data.outputLanguage,
   });
-  const { error } = await supabase.from("flashcards").insert(
-    cards.map((c) => ({ user_id: userId, space_id: data.spaceId, front: c.front, back: c.back })),
-  );
+  const { error } = await supabase
+    .from("flashcards")
+    .insert(
+      cards.map((c) => ({ user_id: userId, space_id: data.spaceId, front: c.front, back: c.back })),
+    );
   if (error) throw new GeminiError("db", error.message, 500);
   await recordUsage(supabase, userId, "analysis");
   await touchSpace(supabase, data.spaceId);
@@ -299,7 +462,8 @@ export async function runQuiz(
 ) {
   await assertQuota(supabase, userId, "quiz");
   const context = await buildSpaceContext(supabase, data.spaceId, 120000);
-  if (!context.trim()) throw new GeminiError("empty_space", "Ajoute d'abord une source à ce cours.", 400);
+  if (!context.trim())
+    throw new GeminiError("empty_space", "Ajoute d'abord une source à ce cours.", 400);
 
   const questions = await geminiService.generateQuiz({
     content: context,
