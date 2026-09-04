@@ -11,7 +11,9 @@
 // usable — it 404s "no longer available to new users" — but the ones below are.
 // NOTE: the free tier is small; the real fix for sustained use is enabling
 // billing on the key (aistudio.google.com/apikey → Set up billing).
-const DEFAULT_CHAIN = [
+// Text/notes: quality first (the 3.x "thinking" models write the best notes and
+// the payload is small, so a slow call is acceptable).
+const DEFAULT_TEXT_CHAIN = [
   "gemini-3.6-flash",
   "gemini-3.5-flash",
   "gemini-2.5-flash-lite",
@@ -20,17 +22,28 @@ const DEFAULT_CHAIN = [
   "gemini-flash-latest",
   "gemini-flash-lite-latest",
 ].join(",");
+// Transcription / OCR: SPEED first. These run with thinking disabled and a big
+// (audio/PDF) payload; a thinking model here takes minutes and times out. The
+// fast lite models transcribe in seconds and have the largest free-tier quota.
+const DEFAULT_MULTIMODAL_CHAIN = [
+  "gemini-2.0-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+  "gemini-3.5-flash",
+].join(",");
 const MODELS = {
-  text: parseChain(process.env["GEMINI_MODEL_TEXT"]),
-  multimodal: parseChain(process.env["GEMINI_MODEL_MULTIMODAL"]),
+  text: parseChain(process.env["GEMINI_MODEL_TEXT"], DEFAULT_TEXT_CHAIN),
+  multimodal: parseChain(process.env["GEMINI_MODEL_MULTIMODAL"], DEFAULT_MULTIMODAL_CHAIN),
 } as const;
 
-function parseChain(env: string | undefined): string[] {
-  const chain = (env ?? DEFAULT_CHAIN)
+function parseChain(env: string | undefined, fallback: string): string[] {
+  const chain = (env ?? fallback)
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean);
-  return chain.length ? chain : DEFAULT_CHAIN.split(",");
+  return chain.length ? chain : fallback.split(",");
 }
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -75,6 +88,8 @@ interface CallOpts {
   timeoutMs?: number;
   /** Overall budget for walking the whole chain (ms). Default 150s. */
   totalBudgetMs?: number;
+  /** Disable model "thinking" (huge speed-up for transcription / OCR). */
+  noThinking?: boolean;
 }
 
 // Errors that mean "this model won't work right now, try the next one".
@@ -99,7 +114,8 @@ async function callGemini(opts: CallOpts): Promise<string> {
 
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i]!;
-    if (Date.now() > deadline) {
+    // Don't hand a model a doomed few-second slot — bail if too little is left.
+    if (deadline - Date.now() < 18_000) {
       console.error(`[gemini] chain budget exhausted before "${model}"`);
       throw lastError;
     }
@@ -127,23 +143,31 @@ async function callModelOnce(
   const url = `${BASE}/models/${model}:generateContent`;
   const timeoutMs = opts.timeoutMs ?? 70_000;
 
-  const body: Record<string, unknown> = {
-    contents: [{ role: "user", parts: opts.parts }],
-    generationConfig: {
+  // Some (older / preview) models reject `thinkingConfig`; if that happens we
+  // drop it and retry the same model once.
+  let includeThinking = !!opts.noThinking;
+  const buildPayload = () => {
+    const generationConfig: Record<string, unknown> = {
       temperature: opts.temperature ?? 0.4,
       ...(opts.schema ? { responseMimeType: "application/json", responseSchema: opts.schema } : {}),
-    },
+      ...(includeThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    };
+    const body: Record<string, unknown> = {
+      contents: [{ role: "user", parts: opts.parts }],
+      generationConfig,
+    };
+    if (opts.system) body["systemInstruction"] = { parts: [{ text: opts.system }] };
+    return JSON.stringify(body);
   };
-  if (opts.system) body["systemInstruction"] = { parts: [{ text: opts.system }] };
 
   const maxAttempts = (opts.retries ?? 1) + 1;
   let lastError: GeminiError | null = null;
-  const payload = JSON.stringify(body);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (Date.now() > deadline) {
       throw lastError ?? new GeminiError("timeout", "Délai dépassé pour le service AI.", 504);
     }
+    const payload = buildPayload();
     const controller = new AbortController();
     const budgetLeft = Math.max(1_000, deadline - Date.now());
     const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, budgetLeft));
@@ -227,6 +251,17 @@ async function callModelOnce(
         503,
       );
       await sleep(1500 * (attempt + 1));
+      continue;
+    }
+    // Model doesn't accept `thinkingConfig` — drop it and retry the same model.
+    if (
+      res.status === 400 &&
+      includeThinking &&
+      /thinking|thinkingConfig|thinkingBudget|Unknown name|not supported/i.test(raw)
+    ) {
+      console.error(`[gemini] "${model}" rejected thinkingConfig → retrying without it`);
+      includeThinking = false;
+      attempt--; // this doesn't count as a real attempt
       continue;
     }
     if (res.status === 400 && /too large|exceeds|token/i.test(raw)) {
@@ -378,6 +413,19 @@ function detailInstruction(level: DetailLevel) {
 const STUDY_SYSTEM =
   "You are an expert academic assistant that turns course material into high quality study notes for students. Never invent facts that are not supported by the source material. Always answer with valid JSON matching the requested schema.";
 
+// Transcription / OCR is a separate, client-driven pipeline step and must fit
+// inside ONE mobile HTTP request: thinking OFF, one shot per model, ~85s per
+// attempt, ~130s for the whole chain. Structuring happens later in
+// `generateStudyNotes`, so these calls only need raw text back.
+const MULTIMODAL_OPTS = {
+  models: MODELS.multimodal as string[],
+  retries: 0,
+  noThinking: true,
+  timeoutMs: 85_000,
+  totalBudgetMs: 130_000,
+  temperature: 0.2,
+} satisfies Partial<CallOpts>;
+
 export const geminiService = {
   async summarizeContent(text: string, outputLanguage: string) {
     return callGemini({
@@ -398,6 +446,8 @@ export const geminiService = {
     const raw = await callGemini({
       system: STUDY_SYSTEM,
       schema: noteSchema,
+      timeoutMs: 110_000,
+      totalBudgetMs: 150_000,
       parts: [
         {
           text: `Create a complete study sheet from the course content below.
@@ -406,7 +456,7 @@ ${languageInstruction(input.outputLanguage)}
 Only use information present in the content.
 
 --- COURSE CONTENT ---
-${input.content}`,
+${input.content.slice(0, 200_000)}`,
         },
       ],
     });
@@ -416,33 +466,23 @@ ${input.content}`,
   /** Transcription only — note generation is a separate pipeline step. */
   async transcribeVideo(input: { url: string }): Promise<string> {
     return callGemini({
-      models: MODELS.multimodal,
-      // Big input, its own client-driven step: never re-upload to the same
-      // model, just move down the chain. Allow a long single attempt.
-      retries: 0,
-      timeoutMs: 115_000,
-      totalBudgetMs: 170_000,
+      ...MULTIMODAL_OPTS,
       parts: [
         { fileData: { fileUri: input.url } },
         {
-          text: "Transcribe this video as accurately as possible. Prefix each paragraph with its timestamp in the format [mm:ss]. Output plain text only, in the original spoken language.",
+          text: "Transcribe this video verbatim. Prefix each paragraph with its timestamp [mm:ss]. Plain text only, original spoken language.",
         },
       ],
-      temperature: 0.2,
     });
   },
 
   async transcribeAudio(input: { base64: string; mimeType: string }): Promise<string> {
     return callGemini({
-      models: MODELS.multimodal,
-      retries: 0,
-      timeoutMs: 115_000,
-      totalBudgetMs: 170_000,
-      temperature: 0.2,
+      ...MULTIMODAL_OPTS,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
         {
-          text: "Transcribe this audio recording of a lecture as accurately as possible. Prefix each paragraph with its timestamp in the format [mm:ss]. Output plain text only, in the original spoken language.",
+          text: "Transcribe this lecture recording verbatim. Prefix each paragraph with its timestamp [mm:ss]. Plain text only, original spoken language.",
         },
       ],
     });
@@ -450,14 +490,11 @@ ${input.content}`,
 
   async analyzeImage(input: { base64: string; mimeType: string; outputLanguage: string }) {
     return callGemini({
-      models: MODELS.multimodal,
-      retries: 0,
-      timeoutMs: 115_000,
-      totalBudgetMs: 170_000,
+      ...MULTIMODAL_OPTS,
       parts: [
         { inlineData: { mimeType: input.mimeType, data: input.base64 } },
         {
-          text: `Read this document or picture of student notes / whiteboard / slides. Extract all text, tables, diagrams, formulas and turn it into clean structured markdown notes. ${languageInstruction(input.outputLanguage)}`,
+          text: "Extract ALL text from this document / photo of notes, in reading order. Keep headings, lists and tables as plain markdown. Transcribe formulas as written. Output the extracted content only, no commentary.",
         },
       ],
     });
@@ -493,11 +530,7 @@ ${input.content}`,
     return parseJson<{ cards: { front: string; back: string }[] }>(raw).cards;
   },
 
-  async generateQuiz(input: {
-    content: string;
-    count: number;
-    outputLanguage: string;
-  }): Promise<
+  async generateQuiz(input: { content: string; count: number; outputLanguage: string }): Promise<
     {
       type: "mcq" | "truefalse" | "short";
       question: string;

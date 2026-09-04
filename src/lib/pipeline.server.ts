@@ -360,11 +360,13 @@ export async function advanceAnalysis(
       }
     }
 
-    // Media source with no transcript yet and this caller has no file to send.
-    // The driver that holds the upload (or a retry) will do it. Only give up if
-    // the row has been sitting untouched long enough to be considered dead.
+    // Media source with no transcript yet and this caller has no file to send
+    // (e.g. the source page resuming after the upload screen was closed). The
+    // driver that holds the upload does the real work; here we only wait a
+    // bounded time, then fail cleanly so the UI stops spinning. 150s > the
+    // transcription chain budget, so we never clobber an in-flight attempt.
     const untouchedFor = Date.now() - new Date(src.updated_at as string).getTime();
-    if (untouchedFor > STEP_CLAIM_STALE_MS) {
+    if (untouchedFor > 150_000) {
       const p = await fail(
         supabase,
         sourceId,
