@@ -66,7 +66,7 @@ a static export — a static build would break every Gemini-backed feature.
   `AnalysisProgress`. **The free tier was genuinely used up that day —
   enabling billing on the key is still the durable fix.**
 - **2026-09-04 — transcription speed rewrite + model list fix. LIVE**
-  (versions `63dc450d` then `<next>`). `wrangler tail` showed: (a) "thinking"
+  (versions `63dc450d` then `984ffb13`). `wrangler tail` showed: (a) "thinking"
   models time out on big PDF/audio payloads; (b) **`gemini-2.0-flash-lite` /
   `2.5-flash-lite` now 404** ("no longer available"); (c)
   `gemini-flash-lite-latest` 400s on `thinkingConfig`. Fixes: chains rebuilt
