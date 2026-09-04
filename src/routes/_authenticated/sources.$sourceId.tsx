@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { advanceAnalysis, retrySource, translateContent } from "@/lib/ai.functions";
 import { driveAnalysis } from "@/lib/analysisDrive";
+import { CONTENT_LANGUAGES, languageLabel } from "@/lib/languages";
 import { deleteSource, reclaimStaleSources } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 
@@ -40,19 +41,12 @@ export const Route = createFileRoute("/_authenticated/sources/$sourceId")({
   component: SourcePage,
 });
 
-// Languages a note / transcript can be re-rendered into on demand. "original"
-// keeps whatever language the analysis produced.
+// The source's fiche / transcription can be re-rendered into any of these on
+// demand. "original" keeps whatever language the analysis produced.
 const VIEW_LANGS = [
-  { code: "original", label: "Original" },
-  { code: "fr", label: "Français" },
-  { code: "en", label: "English" },
-  { code: "th", label: "ไทย" },
-  { code: "zh", label: "中文" },
-  { code: "ko", label: "한국어" },
-  { code: "ja", label: "日本語" },
-] as const;
-
-type ViewLang = (typeof VIEW_LANGS)[number]["code"];
+  { code: "original", flag: "🌐" },
+  ...CONTENT_LANGUAGES.map((l) => ({ code: l.code, flag: l.flag })),
+];
 
 interface TranslationRow {
   kind: "note" | "transcript";
@@ -99,7 +93,7 @@ function SourcePage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"note" | "transcript">("note");
   const [search, setSearch] = useState("");
-  const [viewLang, setViewLang] = useState<ViewLang>("original");
+  const [viewLang, setViewLang] = useState<string>("original");
 
   const runRetry = useServerFn(retrySource);
   const runAdvance = useServerFn(advanceAnalysis);
@@ -173,7 +167,8 @@ function SourcePage() {
   });
 
   const translateMutation = useMutation({
-    mutationFn: async (language: string) => runTranslate({ data: { sourceId, language } }),
+    mutationFn: async (vars: { language: string; kinds: ("note" | "transcript")[] }) =>
+      runTranslate({ data: { sourceId, language: vars.language, kinds: vars.kinds } }),
     onSuccess: (result) => {
       translationQuery.refetch();
       if (!result.ok) toast.error(result.error?.message ?? t("error.generic"));
@@ -181,9 +176,12 @@ function SourcePage() {
     onError: () => toast.error(t("error.generic")),
   });
 
-  const selectLang = (next: ViewLang) => {
+  // Picking a language translates the fiche only. The transcript is left for
+  // the user to translate on demand from its tab (it's long — saves time and
+  // Gemini quota).
+  const selectLang = (next: string) => {
     setViewLang(next);
-    if (next !== "original") translateMutation.mutate(next);
+    if (next !== "original") translateMutation.mutate({ language: next, kinds: ["note"] });
   };
 
   const data = query.data;
@@ -195,26 +193,25 @@ function SourcePage() {
   const noteRow = trRows.find((r) => r.kind === "note");
   const transcriptRow = trRows.find((r) => r.kind === "transcript");
 
-  const note =
-    translated && noteRow?.status === "ready"
-      ? (noteRow.content as unknown as NoteContent)
-      : translated
-        ? undefined
-        : baseNote;
-  const transcript =
-    translated && transcriptRow?.status === "ready"
-      ? (transcriptRow.text ?? "")
-      : translated
-        ? ""
-        : baseTranscript;
+  const pendingKind = (kind: "note" | "transcript") =>
+    translateMutation.isPending && translateMutation.variables?.kinds.includes(kind);
 
-  const translating =
-    translated &&
-    (translateMutation.isPending ||
-      translationQuery.isLoading ||
-      trRows.length === 0 ||
-      trRows.some((r) => r.status === "pending"));
-  const translationFailed = translated && !translating && trRows.some((r) => r.status === "failed");
+  // --- fiche ---
+  const noteReady = translated && noteRow?.status === "ready";
+  const noteFailed = translated && noteRow?.status === "failed" && !pendingKind("note");
+  const notePending = translated && !noteReady && !noteFailed;
+  const note = translated
+    ? noteReady
+      ? (noteRow!.content as unknown as NoteContent)
+      : undefined
+    : baseNote;
+
+  // --- transcription ---
+  const transcriptReady = translated && transcriptRow?.status === "ready";
+  const transcriptPending =
+    translated && (pendingKind("transcript") || transcriptRow?.status === "pending");
+  const transcriptFailed = translated && transcriptRow?.status === "failed" && !transcriptPending;
+  const transcript = transcriptReady && transcriptRow?.text ? transcriptRow.text : baseTranscript;
 
   const lines = transcript
     ? transcript.split(/\n+/).filter((l: string) => l.toLowerCase().includes(search.toLowerCase()))
@@ -222,6 +219,7 @@ function SourcePage() {
 
   const showTabs = !!baseTranscript;
   const canTranslate = status === "completed" && (!!baseNote || !!baseTranscript);
+  const langLabel = translated ? languageLabel(viewLang) : "";
 
   return (
     <>
@@ -270,45 +268,18 @@ function SourcePage() {
         {canTranslate && (
           <div className="flex items-center gap-2">
             <Languages className="size-4 shrink-0 text-muted-foreground" />
-            <Select value={viewLang} onValueChange={(v) => selectLang(v as ViewLang)}>
+            <Select value={viewLang} onValueChange={selectLang}>
               <SelectTrigger className="h-10 rounded-xl" aria-label={t("source.viewLanguage")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {VIEW_LANGS.map((l) => (
                   <SelectItem key={l.code} value={l.code}>
-                    {l.code === "original" ? t("source.original") : l.label}
+                    {l.flag} {l.code === "original" ? t("source.original") : languageLabel(l.code)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-        )}
-
-        {canTranslate && translating && (
-          <div className="card-soft flex items-center gap-2 p-3 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            {t("source.translating")}
-          </div>
-        )}
-
-        {canTranslate && translationFailed && (
-          <div className="card-soft space-y-3 border-destructive/30 p-4 text-sm">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-              <span>
-                {trRows.find((r) => r.status === "failed")?.error_message ??
-                  t("source.translateFailed")}
-              </span>
-            </div>
-            <Button
-              className="h-10 w-full rounded-xl"
-              disabled={translateMutation.isPending}
-              onClick={() => translateMutation.mutate(viewLang)}
-            >
-              <RefreshCw className="mr-2 size-4" />
-              {t("common.retry")}
-            </Button>
           </div>
         )}
 
@@ -331,17 +302,84 @@ function SourcePage() {
           </div>
         )}
 
-        {tab === "note" &&
-          (note ? (
-            <NoteView note={note} />
-          ) : (
-            !query.isLoading &&
-            status === "completed" &&
-            !translating && <p className="text-sm text-muted-foreground">{t("source.empty")}</p>
-          ))}
+        {tab === "note" && (
+          <>
+            {notePending && (
+              <div className="card-soft flex items-center gap-2 p-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                {t("source.translating")}
+              </div>
+            )}
+            {noteFailed && (
+              <div className="card-soft space-y-3 border-destructive/30 p-4 text-sm">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+                  <span>{noteRow?.error_message ?? t("source.translateFailed")}</span>
+                </div>
+                <Button
+                  className="h-10 w-full rounded-xl"
+                  disabled={translateMutation.isPending}
+                  onClick={() => translateMutation.mutate({ language: viewLang, kinds: ["note"] })}
+                >
+                  <RefreshCw className="mr-2 size-4" />
+                  {t("common.retry")}
+                </Button>
+              </div>
+            )}
+            {note ? (
+              <NoteView note={note} />
+            ) : (
+              !query.isLoading &&
+              status === "completed" &&
+              !notePending &&
+              !noteFailed && <p className="text-sm text-muted-foreground">{t("source.empty")}</p>
+            )}
+          </>
+        )}
 
         {tab === "transcript" && (
           <div className="space-y-3">
+            {translated && !transcriptReady && (
+              <div className="card-soft space-y-3 p-3 text-sm">
+                {transcriptPending ? (
+                  <p className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    {t("source.transcriptTranslating")}
+                  </p>
+                ) : transcriptFailed ? (
+                  <>
+                    <p className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+                      <span>{transcriptRow?.error_message ?? t("source.translateFailed")}</span>
+                    </p>
+                    <Button
+                      className="h-10 w-full rounded-xl"
+                      onClick={() =>
+                        translateMutation.mutate({ language: viewLang, kinds: ["transcript"] })
+                      }
+                    >
+                      <RefreshCw className="mr-2 size-4" />
+                      {t("common.retry")}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground">
+                      {t("source.transcriptOriginalNotice", { lang: langLabel })}
+                    </p>
+                    <Button
+                      className="h-10 w-full rounded-xl"
+                      onClick={() =>
+                        translateMutation.mutate({ language: viewLang, kinds: ["transcript"] })
+                      }
+                    >
+                      <Languages className="mr-2 size-4" />
+                      {t("source.translateTranscript", { lang: langLabel })}
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input

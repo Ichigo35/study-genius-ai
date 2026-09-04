@@ -82,7 +82,16 @@ export const advanceAnalysis = createServerFn({ method: "POST" })
 export const translateContent = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ sourceId: z.string().uuid(), language: lang }).parse(d),
+    z
+      .object({
+        sourceId: z.string().uuid(),
+        language: lang,
+        kinds: z
+          .array(z.enum(["note", "transcript"]))
+          .min(1)
+          .optional(),
+      })
+      .parse(d),
   )
   .handler(async ({ data, context }) => {
     const { getRequestHeader } = await import("@tanstack/react-start/server");

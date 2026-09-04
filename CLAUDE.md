@@ -182,13 +182,19 @@ a static export — a static build would break every Gemini-backed feature.
 
 - **2026-09-04 — on-demand translation of the fiche + transcription. LIVE**
   (Worker version `49b5ad40`, deployed by the user).
-  The source page (`sources.$sourceId.tsx`) has a "Langue d'affichage" picker:
-  Original / Français / English / ไทย / 中文 / 한국어 / 日本語. Picking a
-  language translates **both** the study note (structure-preserving, via the
-  `noteSchema`) and the transcript, caching each in the new
-  `public.content_translations` table (`UNIQUE (source_id, kind, language)`,
-  migration `20260904120000_content_translations.sql`, already applied to the
-  DB via MCP).
+  The source page (`sources.$sourceId.tsx`) has a "Langue d'affichage" picker
+  (flags): Original / fr / en / th / lo / zh / ko / ja — the shared list lives
+  in `src/lib/languages.ts` (`CONTENT_LANGUAGES`). Picking a language
+  translates **the fiche only** (structure-preserving, via `noteSchema`); the
+  transcript stays in its original language with a **"Traduire la
+  transcription"** button in its own tab (it's long → saves time + Gemini
+  quota). Each translation is cached in the new `public.content_translations`
+  table (`UNIQUE (source_id, kind, language)`, migration
+  `20260904120000_content_translations.sql`, already applied via MCP).
+  - `translateContent` / `startTranslation` take an optional `kinds`
+    (`["note"]` / `["transcript"]`) filter; the client sends `["note"]` on
+    language-select and `["transcript"]` from the transcript-tab button.
+  - `NoteView.tsx` section headings now have lucide icons (ChatGPT-style).
   - Gemini for translation is **geo-blocked from Laos too**, so it runs in a
     new Edge Function **`translate-source`** (Singapore, `verify_jwt: false`,
     `thinkingBudget: 0`, `TEXT_CHAIN`). Already deployed via
@@ -205,6 +211,13 @@ a static export — a static build would break every Gemini-backed feature.
     `content_translations`).
   - **No cron backstop** — translation only runs while the user is on the
     source page. Each translate call is one Gemini request per kind (~5–15 s).
+
+- **2026-09-04 — flashcards & quiz default to the UI language.**
+  `spaces.$spaceId.tsx` now has a language picker (`CONTENT_LANGUAGES`, flags)
+  above the Flashcards/Quiz buttons, defaulting to `settings.ui_language`
+  (Profil → Langue de l'app), overridable per-generation. Chat (`askSpace`)
+  still uses `ai_output_language`. `gemini.server.ts` `LANG_NAMES` extended
+  with zh/ko/ja/es/de/vi so those targets work for chat/flashcards/quiz too.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 

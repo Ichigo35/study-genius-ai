@@ -260,7 +260,12 @@ async function kickTranslator(
 export async function startTranslation(
   supabase: DB,
   userId: string,
-  data: { sourceId: string; language: string; authHeader?: string | undefined },
+  data: {
+    sourceId: string;
+    language: string;
+    kinds?: ("note" | "transcript")[] | undefined;
+    authHeader?: string | undefined;
+  },
 ): Promise<
   { ok: true; kinds: string[] } | { ok: false; error: { code: string; message: string } }
 > {
@@ -293,9 +298,12 @@ export async function startTranslation(
       .eq("language", data.language),
   ]);
 
-  const available: string[] = [];
+  let available: string[] = [];
   if (notes && notes.length > 0) available.push("note");
   if (trs?.[0]?.full_text?.trim()) available.push("transcript");
+  if (data.kinds && data.kinds.length) {
+    available = available.filter((k) => data.kinds!.includes(k as "note" | "transcript"));
+  }
   if (available.length === 0) {
     return {
       ok: false,

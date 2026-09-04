@@ -552,6 +552,12 @@ const LANG_NAMES: Record<string, string> = {
   en: "English",
   lo: "ພາສາລາວ (Lao)",
   th: "ภาษาไทย (Thai)",
+  zh: "简体中文 (Simplified Chinese)",
+  ko: "한국어 (Korean)",
+  ja: "日本語 (Japanese)",
+  es: "español (Spanish)",
+  de: "Deutsch (German)",
+  vi: "Tiếng Việt (Vietnamese)",
   same: "the same language as the source content",
 };
 

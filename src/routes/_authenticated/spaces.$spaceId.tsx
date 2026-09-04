@@ -6,6 +6,7 @@ import {
   Brain,
   ChevronRight,
   HelpCircle,
+  Languages,
   Loader2,
   Plus,
   Send,
@@ -19,9 +20,17 @@ import { useSettings } from "@/hooks/useSettings";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { askSpace, createFlashcards, createQuiz } from "@/lib/ai.functions";
+import { CONTENT_LANGUAGES } from "@/lib/languages";
 import { deleteSpace, reclaimStaleSources } from "@/lib/sources";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/spaces/$spaceId")({
@@ -71,17 +80,21 @@ async function fetchSpaceData(spaceId: string) {
 
 function SpacePage() {
   const { spaceId } = Route.useParams();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { settings } = useSettings();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"sources" | "notes" | "chat">("sources");
   const [question, setQuestion] = useState("");
+  const [genLangOverride, setGenLangOverride] = useState<string | null>(null);
 
   const ask = useServerFn(askSpace);
   const genCards = useServerFn(createFlashcards);
   const genQuiz = useServerFn(createQuiz);
   const outputLanguage = settings?.ai_output_language ?? "same";
+  // Flashcards & quizzes are generated in the app's interface language by
+  // default (Profil → Langue de l'app), overridable right here.
+  const genLanguage = genLangOverride ?? settings?.ui_language ?? locale;
 
   const query = useQuery({
     queryKey: ["space", spaceId],
@@ -101,7 +114,7 @@ function SpacePage() {
   });
 
   const cardsMutation = useMutation({
-    mutationFn: async () => genCards({ data: { spaceId, count: 15, outputLanguage } }),
+    mutationFn: async () => genCards({ data: { spaceId, count: 15, outputLanguage: genLanguage } }),
     onSuccess: () => {
       queryClient.invalidateQueries();
       navigate({ to: "/review" });
@@ -110,7 +123,7 @@ function SpacePage() {
   });
 
   const quizMutation = useMutation({
-    mutationFn: async () => genQuiz({ data: { spaceId, count: 10, outputLanguage } }),
+    mutationFn: async () => genQuiz({ data: { spaceId, count: 10, outputLanguage: genLanguage } }),
     onSuccess: (result) => {
       queryClient.invalidateQueries();
       navigate({ to: "/quizzes/$quizId", params: { quizId: result.quizId } });
@@ -154,6 +167,21 @@ function SpacePage() {
         }
       />
       <main className="space-y-4 px-5">
+        <div className="flex items-center gap-2">
+          <Languages className="size-4 shrink-0 text-muted-foreground" />
+          <Select value={genLanguage} onValueChange={setGenLangOverride}>
+            <SelectTrigger className="h-10 rounded-xl" aria-label={t("space.genLanguage")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CONTENT_LANGUAGES.map((l) => (
+                <SelectItem key={l.code} value={l.code}>
+                  {l.flag} {l.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Button
             variant="secondary"

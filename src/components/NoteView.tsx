@@ -1,3 +1,16 @@
+import {
+  CalendarClock,
+  GraduationCap,
+  HelpCircle,
+  Lightbulb,
+  ListChecks,
+  ListTree,
+  Sparkles,
+  Star,
+  Target,
+  Wand2,
+  type LucideIcon,
+} from "lucide-react";
 import { useI18n } from "@/i18n";
 
 export interface NoteContent {
@@ -14,10 +27,21 @@ export interface NoteContent {
   outline: string[];
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: LucideIcon;
+  children: React.ReactNode;
+}) {
   return (
     <section className="card-soft p-4">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        <Icon className="size-4 shrink-0 text-primary" />
+        {title}
+      </h3>
       <div className="mt-2 text-[0.95rem] leading-relaxed">{children}</div>
     </section>
   );
@@ -42,14 +66,18 @@ export function NoteView({ note }: { note: NoteContent }) {
 
   return (
     <div className="space-y-3">
-      {note.summary && <Section title={t("note.summary")}>{note.summary}</Section>}
+      {note.summary && (
+        <Section title={t("note.summary")} icon={Sparkles}>
+          {note.summary}
+        </Section>
+      )}
       {has(note.keyPoints) && (
-        <Section title={t("note.keyPoints")}>
+        <Section title={t("note.keyPoints")} icon={ListChecks}>
           <List items={note.keyPoints} />
         </Section>
       )}
       {has(note.concepts) && (
-        <Section title={t("note.concepts")}>
+        <Section title={t("note.concepts")} icon={Lightbulb}>
           <dl className="space-y-2">
             {note.concepts.map((c, i) => (
               <div key={i}>
@@ -61,33 +89,37 @@ export function NoteView({ note }: { note: NoteContent }) {
         </Section>
       )}
       {has(note.mustKnow) && (
-        <Section title={t("note.mustKnow")}>
+        <Section title={t("note.mustKnow")} icon={Star}>
           <List items={note.mustKnow} />
         </Section>
       )}
       {has(note.facts) && (
-        <Section title={t("note.facts")}>
+        <Section title={t("note.facts")} icon={CalendarClock}>
           <List items={note.facts} />
         </Section>
       )}
       {has(note.examples) && (
-        <Section title={t("note.examples")}>
+        <Section title={t("note.examples")} icon={Wand2}>
           <List items={note.examples} />
         </Section>
       )}
       {has(note.examTopics) && (
-        <Section title={t("note.exam")}>
+        <Section title={t("note.exam")} icon={Target}>
           <List items={note.examTopics} />
         </Section>
       )}
-      {note.simpleExplanation && <Section title={t("note.simple")}>{note.simpleExplanation}</Section>}
+      {note.simpleExplanation && (
+        <Section title={t("note.simple")} icon={GraduationCap}>
+          {note.simpleExplanation}
+        </Section>
+      )}
       {has(note.potentialQuestions) && (
-        <Section title={t("note.questions")}>
+        <Section title={t("note.questions")} icon={HelpCircle}>
           <List items={note.potentialQuestions} />
         </Section>
       )}
       {has(note.outline) && (
-        <Section title={t("note.outline")}>
+        <Section title={t("note.outline")} icon={ListTree}>
           <List items={note.outline} />
         </Section>
       )}
