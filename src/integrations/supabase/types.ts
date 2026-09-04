@@ -160,6 +160,56 @@ export type Database = {
           },
         ]
       }
+      content_translations: {
+        Row: {
+          content: Json | null
+          created_at: string
+          error_message: string | null
+          id: string
+          kind: string
+          language: string
+          source_id: string
+          status: string
+          text: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content?: Json | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          kind: string
+          language: string
+          source_id: string
+          status?: string
+          text?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: Json | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          kind?: string
+          language?: string
+          source_id?: string
+          status?: string
+          text?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "content_translations_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       favorites: {
         Row: {
           created_at: string

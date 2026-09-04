@@ -180,6 +180,34 @@ a static export — a static build would break every Gemini-backed feature.
      finishes even if the app stops polling. Without it, the app must stay on
      the source page while each step runs (~30 s each now, so usually fine).
 
+- **2026-09-04 — on-demand translation of the fiche + transcription. Code
+  shipped, needs the Worker deploy to go live.**
+  The source page (`sources.$sourceId.tsx`) has a "Langue d'affichage" picker:
+  Original / Français / English / ไทย / 中文 / 한국어 / 日本語. Picking a
+  language translates **both** the study note (structure-preserving, via the
+  `noteSchema`) and the transcript, caching each in the new
+  `public.content_translations` table (`UNIQUE (source_id, kind, language)`,
+  migration `20260904120000_content_translations.sql`, already applied to the
+  DB via MCP).
+  - Gemini for translation is **geo-blocked from Laos too**, so it runs in a
+    new Edge Function **`translate-source`** (Singapore, `verify_jwt: false`,
+    `thinkingBudget: 0`, `TEXT_CHAIN`). Already deployed via
+    `mcp__supabase__deploy_edge_function` (v1).
+  - Worker server fn **`translateContent`** (`ai.functions.ts` →
+    `startTranslation` in `pipeline.server.ts`) is the thin kicker: it marks
+    the needed `content_translations` rows `pending`, POSTs
+    `{ sourceId, language, kinds }` + `x-gemini-key` + user JWT to
+    `translate-source`, returns fast. Client polls `content_translations`
+    every 3 s while any row is `pending`.
+  - `retryAnalysis` now also deletes `content_translations` for the source
+    (stale once the base content is regenerated).
+  - `src/integrations/supabase/types.ts` regenerated (adds
+    `content_translations`).
+  - **No cron backstop** — translation only runs while the user is on the
+    source page. Each translate call is one Gemini request per kind (~5–15 s).
+  - Still needs: `bun run build && node scripts/patch-placement.mjs &&
+    npx nitro deploy --prebuilt` (client bundle change).
+
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
 Audited the 14 `public.*` tables from `supabase/migrations/*` against the live

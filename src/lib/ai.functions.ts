@@ -79,6 +79,18 @@ export const advanceAnalysis = createServerFn({ method: "POST" })
     return advance(context.supabase, context.userId, { ...data, authHeader });
   });
 
+export const translateContent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ sourceId: z.string().uuid(), language: lang }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
+    const { startTranslation } = await import("./pipeline.server");
+    const authHeader = getRequestHeader("authorization") ?? undefined;
+    return startTranslation(context.supabase, context.userId, { ...data, authHeader });
+  });
+
 export const retrySource = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>

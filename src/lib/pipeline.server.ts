@@ -219,6 +219,115 @@ async function kickProcessor(sourceId: string, outputLanguage: string, authHeade
   }
 }
 
+/**
+ * Kicks the `translate-source` Edge Function (Singapore) to translate a
+ * source's study note and/or transcript into `language`. Same rationale as
+ * `kickProcessor`: Gemini is geo-blocked from the Worker's region.
+ */
+async function kickTranslator(
+  sourceId: string,
+  language: string,
+  kinds: string[],
+  authHeader?: string,
+) {
+  const url = process.env["SUPABASE_URL"];
+  const anon = process.env["SUPABASE_PUBLISHABLE_KEY"];
+  const gemKey = process.env["GEMINI_API_KEY"]
+    ?.trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+  if (!url || !gemKey || !authHeader) {
+    console.error("[translateContent] cannot kick translator — missing url/key/auth");
+    return;
+  }
+  try {
+    const res = await fetch(`${url}/functions/v1/translate-source`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: authHeader,
+        ...(anon ? { apikey: anon } : {}),
+        "x-gemini-key": gemKey,
+      },
+      body: JSON.stringify({ sourceId, language, kinds }),
+    });
+    if (!res.ok) console.error(`[translateContent] translator kick → ${res.status}`);
+  } catch (e) {
+    console.error("[translateContent] translator kick failed:", e);
+  }
+}
+
+export async function startTranslation(
+  supabase: DB,
+  userId: string,
+  data: { sourceId: string; language: string; authHeader?: string | undefined },
+): Promise<
+  { ok: true; kinds: string[] } | { ok: false; error: { code: string; message: string } }
+> {
+  const { data: src, error } = await supabase
+    .from("sources")
+    .select("id, user_id")
+    .eq("id", data.sourceId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  if (!src) return { ok: false, error: { code: "not_found", message: "Source introuvable." } };
+
+  const [{ data: notes }, { data: trs }, { data: existing }] = await Promise.all([
+    supabase
+      .from("study_notes")
+      .select("id")
+      .eq("source_id", data.sourceId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("transcripts")
+      .select("full_text")
+      .eq("source_id", data.sourceId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("content_translations")
+      .select("kind, status")
+      .eq("source_id", data.sourceId)
+      .eq("language", data.language),
+  ]);
+
+  const available: string[] = [];
+  if (notes && notes.length > 0) available.push("note");
+  if (trs?.[0]?.full_text?.trim()) available.push("transcript");
+  if (available.length === 0) {
+    return {
+      ok: false,
+      error: { code: "not_ready", message: "L'analyse n'est pas encore terminée." },
+    };
+  }
+
+  const ready = new Set(
+    (existing ?? []).filter((r) => r.status === "ready").map((r) => r.kind as string),
+  );
+  const kinds = available.filter((k) => !ready.has(k));
+  if (kinds.length === 0) return { ok: true, kinds: [] };
+
+  // Mark rows pending right away so the UI shows progress without a flicker.
+  for (const kind of kinds) {
+    await supabase.from("content_translations").upsert(
+      {
+        user_id: userId,
+        source_id: data.sourceId,
+        kind,
+        language: data.language,
+        status: "pending",
+        error_message: null,
+      },
+      { onConflict: "source_id,kind,language" },
+    );
+  }
+
+  await kickTranslator(data.sourceId, data.language, kinds, data.authHeader);
+  return { ok: true, kinds };
+}
+
 export async function advanceAnalysis(
   supabase: DB,
   userId: string,
@@ -330,6 +439,8 @@ export async function retryAnalysis(
   }
 
   await supabase.from("study_notes").delete().eq("source_id", sourceId);
+  // Old translations no longer match the content that's about to be regenerated.
+  await supabase.from("content_translations").delete().eq("source_id", sourceId);
   await supabase
     .from("sources")
     .update({
