@@ -54,7 +54,11 @@ function parseChain(env: string | undefined, fallback: string): string[] {
 //   GEMINI_API_BASE = https://gateway.ai.cloudflare.com/v1/<acct>/<gateway>/google-ai-studio/v1beta
 // Falls back to calling Google directly.
 const DIRECT_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const BASE = (process.env["GEMINI_API_BASE"]?.trim().replace(/\/+$/, "") || DIRECT_BASE) as string;
+// Read per-call: on Workers `process.env` is only populated inside a request.
+function apiBase() {
+  const override = process.env["GEMINI_API_BASE"]?.trim().replace(/\/+$/, "");
+  return override || DIRECT_BASE;
+}
 
 export class GeminiError extends Error {
   code: string;
@@ -152,7 +156,7 @@ async function callModelOnce(
   deadline = Date.now() + 150_000,
 ): Promise<string> {
   const key = apiKey();
-  const url = `${BASE}/models/${model}:generateContent`;
+  const url = `${apiBase()}/models/${model}:generateContent`;
   const timeoutMs = opts.timeoutMs ?? 70_000;
 
   // Some models reject `thinkingConfig`; if that happens we drop it, remember
