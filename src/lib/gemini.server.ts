@@ -445,16 +445,16 @@ function detailInstruction(level: DetailLevel) {
 const STUDY_SYSTEM =
   "You are an expert academic assistant that turns course material into high quality study notes for students. Never invent facts that are not supported by the source material. Always answer with valid JSON matching the requested schema.";
 
-// Transcription / OCR is a separate, client-driven pipeline step and must fit
-// inside ONE mobile HTTP request: thinking OFF, one shot per model, ~85s per
-// attempt, ~130s for the whole chain. Structuring happens later in
-// `generateStudyNotes`, so these calls only need raw text back.
+// Transcription / OCR — a background pipeline step (see `pipeline.server.ts`).
+// One shot per model, walk the chain fast. `thinkingConfig` is NOT sent here:
+// gemini-3.5-flash-lite 400s on it ("Request contains an invalid argument")
+// which forced a wasteful re-upload of the whole file. The lite models are
+// already fast enough. Structuring happens later in `generateStudyNotes`.
 const MULTIMODAL_OPTS = {
   models: MODELS.multimodal as string[],
   retries: 0,
-  noThinking: true,
-  timeoutMs: 95_000,
-  totalBudgetMs: 150_000,
+  timeoutMs: 100_000,
+  totalBudgetMs: 220_000,
   temperature: 0.2,
 } satisfies Partial<CallOpts>;
 

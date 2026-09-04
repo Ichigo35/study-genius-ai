@@ -10,8 +10,7 @@ import {
   SpaceAndDetailPicker,
   useComposerState,
 } from "@/components/SourceComposer";
-import { advanceAnalysis, startText } from "@/lib/ai.functions";
-import { driveAnalysis } from "@/lib/analysisDrive";
+import { startText } from "@/lib/ai.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,7 +40,6 @@ function TextPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const runStart = useServerFn(startText);
-  const runAdvance = useServerFn(advanceAnalysis);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [stage, setStage] = useState<string | null>(null);
@@ -67,18 +65,8 @@ function TextPage() {
         setStage(null);
         return;
       }
-      const sourceId = start.sourceId;
-      const outcome = await driveAnalysis({
-        advance: runAdvance,
-        sourceId,
-        outputLanguage: state.outputLanguage,
-        onStep: (s) => setStage(s),
-      });
-      if (outcome.status === "failed") {
-        toast.error(outcome.error?.message ?? t("error.generic"));
-      }
       queryClient.invalidateQueries();
-      navigate({ to: "/sources/$sourceId", params: { sourceId } });
+      navigate({ to: "/sources/$sourceId", params: { sourceId: start.sourceId } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("error.generic"));
       setStage(null);

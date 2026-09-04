@@ -1,5 +1,33 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getRequest } from "@tanstack/react-start/server";
 import { GeminiError } from "./gemini.server";
+
+/**
+ * Run `promise` beyond the lifetime of the current request. On Cloudflare
+ * Workers, `request.waitUntil` (wired by the Nitro preset) keeps the isolate
+ * alive until it settles — so a transcription survives the client hanging up.
+ * If `waitUntil` isn't available it's a plain floating promise (runs only while
+ * the isolate stays warm) — no worse than awaiting it inline.
+ */
+export function runInBackground(promise: Promise<unknown>) {
+  const p = Promise.resolve(promise).catch((e) => {
+    console.error("[bg] task failed:", e);
+  });
+  try {
+    const req = getRequest() as unknown as {
+      waitUntil?: (pr: Promise<unknown>) => void;
+    };
+    if (typeof req?.waitUntil === "function") {
+      req.waitUntil(p);
+      console.log("[bg] registered with waitUntil");
+    } else {
+      console.warn("[bg] no waitUntil available — task runs only while isolate is warm");
+    }
+  } catch (e) {
+    console.warn("[bg] waitUntil lookup failed:", e);
+  }
+  return p;
+}
 
 export type UsageKind = "analysis" | "video" | "audio_minutes" | "quiz" | "chat";
 
