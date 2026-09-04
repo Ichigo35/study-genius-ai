@@ -44,15 +44,13 @@ a static export — a static build would break every Gemini-backed feature.
 - Redeployed 2026-09-03 with the Gemini auth/model fix + model fallback chain
   (see "Gemini API" section); latest version `9575de0b`. `GEMINI_API_KEY`
   secret rotated to the current `AQ.…`-format key.
-- **2026-09-04 — retry / delete for analyses + delete courses (needs deploy).**
-  Added `retrySource` server fn (`src/lib/ai.functions.ts` →
-  `retryAnalysis` in `pipeline.server.ts`), and client helpers in
-  `src/lib/sources.ts` (`reclaimStaleSources`, `deleteSource`,
-  `deleteSpace`). The agent's `npx nitro deploy --prebuilt` was blocked by
-  the sandbox classifier — **the user must run
-  `bun run build && npx nitro deploy --prebuilt` for any of this to go
-  live** (client bundle is served by the Worker, so nothing ships until
-  then). APK unchanged (loads the live URL via `server.url`).
+- **2026-09-04 — retry / delete for analyses + delete courses. LIVE**
+  (version `81770e93`, deployed by the user — `npx nitro deploy` is blocked
+  by the sandbox classifier for the agent). Added `retrySource` server fn
+  (`src/lib/ai.functions.ts` → `retryAnalysis` in `pipeline.server.ts`) and
+  client helpers in `src/lib/sources.ts` (`reclaimStaleSources`,
+  `deleteSource`, `deleteSpace`). APK unchanged (loads the live URL via
+  `server.url`).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
