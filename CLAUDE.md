@@ -88,11 +88,13 @@ a static export — a static build would break every Gemini-backed feature.
     proxied through gateway `study-genius` (`google-ai-studio` provider) still
     come back `FAILED_PRECONDITION`. `GEMINI_API_BASE` secret is set to the
     gateway URL and harmless, but it doesn't help; leave it or clear it.
-  - **FREE fix (chosen): a US-pinned relay Worker.** `gemini-proxy/`
-    (standalone, `[placement] region = "aws:us-east-1"` — targeted placement
-    is free on all Workers plans) runs in the US, so its `fetch()` to
-    `generativelanguage.googleapis.com` egresses from the US and the free
-    API works. Deploy: `cd gemini-proxy && npx wrangler deploy` →
+  - **FREE fix (chosen): a US-pinned relay Worker.** Lives at
+    **`~/gemini-proxy`** (NOT in this repo — wrangler can't disambiguate its
+    `wrangler.toml` from the app's generated `.wrangler/deploy/config.json`).
+    Standalone Worker, `[placement] region = "aws:us-east-1"` (targeted
+    placement is free on all Workers plans) → runs in the US, so its
+    `fetch()` to `generativelanguage.googleapis.com` egresses from the US and
+    the free API works. Deploy: `cd ~/gemini-proxy && npx wrangler deploy` →
     `gemini-proxy.ichigo35.workers.dev`. Then point the main app at it:
     `printf %s "https://gemini-proxy.ichigo35.workers.dev/v1beta" | npx
     wrangler secret put GEMINI_API_BASE --name ichigo35-study-genius-ai`
