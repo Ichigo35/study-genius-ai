@@ -77,6 +77,21 @@ a static export — a static build would break every Gemini-backed feature.
   "extract raw text" prompts; `generateStudyNotes` capped at 200k chars; a
   base64-less resume driver fails a stuck media transcript after 150s.
 
+- **2026-09-04 — ROOT CAUSE of the failing analyses: Gemini geo-block.**
+  `wrangler tail` finally showed every model returning
+  `400 FAILED_PRECONDITION: "User location is not supported for the API use"`
+  — Google geo-blocks the Cloudflare Worker's egress IP. The stepped
+  pipeline / timeout / model-name work above was all real but secondary.
+  **Fix = route Gemini through a Cloudflare AI Gateway** (`google-ai-studio`
+  provider) so the upstream call leaves from a supported region:
+  1. Cloudflare dashboard → AI → AI Gateway → Create Gateway, name it
+     `study-genius` (account id `34cf747a1eaf3858a49e4fafaf9580e0`).
+  2. `printf %s "https://gateway.ai.cloudflare.com/v1/34cf747a1eaf3858a49e4fafaf9580e0/study-genius/google-ai-studio/v1beta" | npx wrangler secret put GEMINI_API_BASE --name ichigo35-study-genius-ai`
+  3. `bun run build && npx nitro deploy --prebuilt`
+  Code reads `GEMINI_API_BASE` per-call (`apiBase()` in `gemini.server.ts`);
+  unset = call Google directly. A geo-block response short-circuits the chain
+  with `GeminiError("geo_blocked")`.
+
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
 Audited the 14 `public.*` tables from `supabase/migrations/*` against the live
