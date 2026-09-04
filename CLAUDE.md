@@ -94,6 +94,30 @@ a static export — a static build would break every Gemini-backed feature.
     Google directly. A geo-block response short-circuits the chain with
     `GeminiError("geo_blocked")`.
   - **LIVE** — version `20a83356` ships the code that reads `GEMINI_API_BASE`.
+    Confirmed via AI Gateway logs: requests now reach Google (no more
+    geo-block); logged request location is "Vientiane Prefecture" → **the user
+    is in Laos**, which Gemini doesn't support directly.
+
+- **2026-09-04 — Storage upload + background execution. NOT YET DEPLOYED.**
+  Even with the gateway, the Lao mobile link can't hold one request long
+  enough to upload a 7.5 MB PDF *and* await transcription — `wrangler tail`
+  showed the `advance` request `Canceled` after ~5s, killing the Worker
+  mid-transcription.
+  - **Supabase Storage** bucket `study-uploads` (`{user_id}/{source_id}`,
+    private, owner RLS — migration `study_genius_uploads_bucket`). Client
+    uploads the file once (with retries) then navigates; `advanceAnalysis`
+    pulls it server-side and deletes it after the transcript is saved.
+  - **Background execution**: transcription + note-gen run via
+    `runInBackground()` (`study.server.ts`) = `request.waitUntil` on Workers;
+    `advanceAnalysis` returns `processing` immediately. The client only holds
+    ~1s poll connections. `runInBackground` logs whether `waitUntil` was
+    actually found — **check `wrangler tail` for `[bg] registered with
+    waitUntil` vs `[bg] no waitUntil available`**; if the latter, a cron/queue
+    backstop is needed (TanStack's `new H3Event(request)` may drop the CF
+    execution context).
+  - Add screens just start + navigate now; the source page poll + driver runs
+    the rest. `thinkingConfig` dropped from transcription (3.5-flash-lite
+    400s on it). `STEP_CLAIM_STALE_MS` 4→6 min.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
