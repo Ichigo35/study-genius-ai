@@ -181,7 +181,8 @@ a static export — a static build would break every Gemini-backed feature.
      the source page while each step runs (~30 s each now, so usually fine).
 
 - **2026-09-04 — on-demand translation of the fiche + transcription. LIVE**
-  (Worker version `49b5ad40`, deployed by the user).
+  (Worker `49b5ad40`; refined to fiche-only + flags + NoteView icons +
+  flashcards/quiz UI-language default in `54871627`).
   The source page (`sources.$sourceId.tsx`) has a "Langue d'affichage" picker
   (flags): Original / fr / en / th / lo / zh / ko / ja — the shared list lives
   in `src/lib/languages.ts` (`CONTENT_LANGUAGES`). Picking a language
