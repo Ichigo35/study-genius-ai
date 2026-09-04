@@ -65,6 +65,18 @@ a static export — a static build would break every Gemini-backed feature.
   extended with `gemini-2.0-flash` / `-lite` (~200/day). Elapsed timer in
   `AnalysisProgress`. **The free tier was genuinely used up that day —
   enabling billing on the key is still the durable fix.**
+- **2026-09-04 — transcription speed rewrite. NOT YET DEPLOYED.** Live
+  `wrangler tail` showed the transcription step walking the *whole* chain
+  with every model timing out: "thinking" models take minutes on a big
+  PDF/audio payload. Fixes: separate `DEFAULT_MULTIMODAL_CHAIN` (fast lite
+  models first: `gemini-2.0-flash-lite`, `2.5-flash-lite`,
+  `flash-lite-latest`, …), `CallOpts.noThinking` →
+  `thinkingConfig.thinkingBudget=0` for transcription/OCR (with a graceful
+  400-retry-without-it), transcription budget cut to 85s/attempt · 130s total
+  so it fits one mobile HTTP request, simplified "extract raw text" prompts,
+  `generateStudyNotes` capped at 200k chars. A base64-less resume driver
+  fails a stuck media transcript after 150s. Needs `npx nitro deploy
+  --prebuilt`.
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
@@ -180,17 +192,23 @@ Ne s'applique pas aux simples questions ou explorations.
   (quota/rate), 404 (model retired), 5xx (overload), **per-attempt timeout**
   or network error it moves to the next model. Only 400/401/403 (bad request
   / auth) short-circuit.
-- **Timeouts (2026-09-04).** Every Gemini `fetch` has an `AbortController`
-  timeout (`CallOpts.timeoutMs`, default 70s; 115s for the big
-  transcription/OCR uploads) plus an overall chain budget
-  (`totalBudgetMs`, default 150s; 170s for transcription). This is what fixed
-  the analysis hanging for minutes on "Transcription". `transcribeAudio` /
-  `transcribeVideo` / `analyzeImage` also use `retries: 0` — never re-upload
-  15–20 MB to a model that just 429'd, just fall down the chain.
+- **Timeouts / speed (2026-09-04).** Every Gemini `fetch` has an
+  `AbortController` timeout (`CallOpts.timeoutMs`, default 70s) plus an
+  overall chain budget (`totalBudgetMs`, default 150s). `callGemini` also
+  skips a model when <18s of budget is left (no doomed slots).
+  - **Transcription / OCR** (`transcribeAudio` / `transcribeVideo` /
+    `analyzeImage`) uses `MULTIMODAL_OPTS`: `noThinking: true`
+    (`thinkingConfig.thinkingBudget = 0`), `retries: 0`, `timeoutMs: 85s`,
+    `totalBudgetMs: 130s` — it must complete inside one mobile HTTP request.
+    A "thinking" model on a 15–20 MB PDF/audio takes minutes and times out;
+    the fast lite models do it in seconds. Prompts are "extract raw text
+    only" — structuring is `generateStudyNotes`'s job.
+  - If a model 400s complaining about `thinkingConfig` it's retried once
+    without it (`includeThinking` flip + `attempt--`).
 - Each *distinct* model version has its **own** free-tier bucket. The 3.x
   previews are ~20 req/day; `gemini-2.0-flash` / `-lite` are ~200/day, so
-  they're the real headroom in the chain. `gemini-2.5-flash` (exact) is
-  unusable — 404 "no longer available to new users".
+  they're the real headroom. `gemini-2.5-flash` (exact) is unusable —
+  404 "no longer available to new users".
 - The Worker secret `GEMINI_API_KEY` is set via
   `wrangler secret put GEMINI_API_KEY --name ichigo35-study-genius-ai`. The
   code trims surrounding quotes/whitespace defensively.
