@@ -58,30 +58,61 @@ async function fail(supabase: DB, sourceId: string, error: unknown) {
   return { ok: false as const, sourceId, error: payload };
 }
 
-export async function runYouTubeAnalysis(
+/**
+ * The analysis pipeline is split into short, client-driven steps so no single
+ * request has to survive two back-to-back 20–60s Gemini calls (which used to
+ * time out on the client / the Worker and leave the progress bar stuck).
+ *
+ *   `start*`          — validates + quota-checks + inserts the `sources` row,
+ *                       returns instantly. No Gemini call.
+ *   `advanceAnalysis` — does exactly ONE unit of work (one Gemini call) then
+ *                       returns. The client calls it in a loop until the source
+ *                       is `completed`/`failed`; the source page does the same,
+ *                       so an interrupted run resumes on its own.
+ *
+ * `progress_step` state machine:
+ *   transcript_pending → transcript_running → notes_pending → notes_running → done
+ * (text sources start straight at `notes_pending`.)
+ */
+
+type StartResult =
+  | { ok: true; sourceId: string; cached?: boolean }
+  | { ok: false; error: { code: string; message: string } };
+
+// A step claim older than this is assumed dead (Worker killed / connection
+// dropped mid-call) and may be re-claimed by another `advanceAnalysis` call.
+// Shorter than STALE_ANALYSIS_MS in sources.ts so a run self-heals before the
+// UI hard-fails it.
+const STEP_CLAIM_STALE_MS = 4 * 60 * 1000;
+
+export async function startYouTubeAnalysis(
   supabase: DB,
   userId: string,
   data: { spaceId: string; url: string; detailLevel: DetailLevel; outputLanguage: string },
-) {
+): Promise<StartResult> {
   const videoId = parseYouTubeUrl(data.url);
   if (!videoId) {
     return {
-      ok: false as const,
+      ok: false,
       error: { code: "invalid_url", message: "Ce lien YouTube n'est pas valide." },
     };
   }
-  await assertQuota(supabase, userId, "video");
-  await assertQuota(supabase, userId, "analysis");
+  try {
+    await assertQuota(supabase, userId, "video");
+    await assertQuota(supabase, userId, "analysis");
+  } catch (e) {
+    return { ok: false, error: errorPayload(e) };
+  }
 
   const cleanUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const { data: existing } = await supabase
     .from("sources")
-    .select("id, status")
+    .select("id")
     .eq("space_id", data.spaceId)
     .eq("original_url", cleanUrl)
     .eq("status", "completed")
     .maybeSingle();
-  if (existing) return { ok: true as const, sourceId: existing.id as string, cached: true };
+  if (existing) return { ok: true, sourceId: existing.id as string, cached: true };
 
   const { data: source, error } = await supabase
     .from("sources")
@@ -91,54 +122,18 @@ export async function runYouTubeAnalysis(
       title: `YouTube — ${videoId}`,
       type: "youtube",
       status: "processing",
-      progress_step: "transcribing",
+      progress_step: "transcript_pending",
       original_url: cleanUrl,
       detail_level: data.detailLevel,
+      language: data.outputLanguage,
     })
     .select("id")
     .single();
-  if (error) throw new GeminiError("db", error.message, 500);
-  const sourceId = source.id as string;
-
-  try {
-    const result = await geminiService.analyzeVideo({
-      url: cleanUrl,
-      detailLevel: data.detailLevel,
-      outputLanguage: data.outputLanguage,
-    });
-    await supabase.from("transcripts").insert({
-      user_id: userId,
-      source_id: sourceId,
-      full_text: result.transcript,
-      language: data.outputLanguage,
-    });
-    await persistNotes(
-      supabase,
-      userId,
-      data.spaceId,
-      sourceId,
-      result.notes,
-      data.detailLevel,
-      data.outputLanguage,
-    );
-    await supabase
-      .from("sources")
-      .update({
-        status: "completed",
-        progress_step: "done",
-        title: result.notes.title || `YouTube — ${videoId}`,
-      })
-      .eq("id", sourceId);
-    await recordUsage(supabase, userId, "video");
-    await recordUsage(supabase, userId, "analysis");
-    await touchSpace(supabase, data.spaceId);
-    return { ok: true as const, sourceId };
-  } catch (e) {
-    return fail(supabase, sourceId, e);
-  }
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  return { ok: true, sourceId: source.id as string };
 }
 
-export async function runTextAnalysis(
+export async function startTextAnalysis(
   supabase: DB,
   userId: string,
   data: {
@@ -148,8 +143,12 @@ export async function runTextAnalysis(
     detailLevel: DetailLevel;
     outputLanguage: string;
   },
-) {
-  await assertQuota(supabase, userId, "analysis");
+): Promise<StartResult> {
+  try {
+    await assertQuota(supabase, userId, "analysis");
+  } catch (e) {
+    return { ok: false, error: errorPayload(e) };
+  }
   const { data: source, error } = await supabase
     .from("sources")
     .insert({
@@ -158,43 +157,18 @@ export async function runTextAnalysis(
       title: data.title,
       type: "text",
       status: "processing",
-      progress_step: "analyzing",
+      progress_step: "notes_pending",
       raw_text: data.text,
       detail_level: data.detailLevel,
+      language: data.outputLanguage,
     })
     .select("id")
     .single();
-  if (error) throw new GeminiError("db", error.message, 500);
-  const sourceId = source.id as string;
-
-  try {
-    const notes = await geminiService.generateStudyNotes({
-      content: data.text,
-      detailLevel: data.detailLevel,
-      outputLanguage: data.outputLanguage,
-    });
-    await persistNotes(
-      supabase,
-      userId,
-      data.spaceId,
-      sourceId,
-      notes,
-      data.detailLevel,
-      data.outputLanguage,
-    );
-    await supabase
-      .from("sources")
-      .update({ status: "completed", progress_step: "done" })
-      .eq("id", sourceId);
-    await recordUsage(supabase, userId, "analysis");
-    await touchSpace(supabase, data.spaceId);
-    return { ok: true as const, sourceId };
-  } catch (e) {
-    return fail(supabase, sourceId, e);
-  }
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  return { ok: true, sourceId: source.id as string };
 }
 
-export async function runMediaAnalysis(
+export async function startMediaAnalysis(
   supabase: DB,
   userId: string,
   data: {
@@ -202,16 +176,19 @@ export async function runMediaAnalysis(
     title: string;
     kind: "audio" | "recording" | "image" | "pdf";
     mimeType: string;
-    base64: string;
     durationSeconds?: number | undefined;
     detailLevel: DetailLevel;
     outputLanguage: string;
   },
-) {
-  await assertQuota(supabase, userId, "analysis");
-  const minutes = Math.max(1, Math.ceil((data.durationSeconds ?? 60) / 60));
+): Promise<StartResult> {
   const isDoc = data.kind === "image" || data.kind === "pdf";
-  if (!isDoc) await assertQuota(supabase, userId, "audio_minutes", minutes);
+  const minutes = Math.max(1, Math.ceil((data.durationSeconds ?? 60) / 60));
+  try {
+    await assertQuota(supabase, userId, "analysis");
+    if (!isDoc) await assertQuota(supabase, userId, "audio_minutes", minutes);
+  } catch (e) {
+    return { ok: false, error: errorPayload(e) };
+  }
 
   const { data: source, error } = await supabase
     .from("sources")
@@ -221,64 +198,224 @@ export async function runMediaAnalysis(
       title: data.title,
       type: data.kind,
       status: "processing",
-      progress_step: isDoc ? "analyzing" : "transcribing",
+      progress_step: "transcript_pending",
       duration_seconds: data.durationSeconds ?? null,
       detail_level: data.detailLevel,
+      language: data.outputLanguage,
     })
     .select("id")
     .single();
-  if (error) throw new GeminiError("db", error.message, 500);
-  const sourceId = source.id as string;
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  return { ok: true, sourceId: source.id as string };
+}
 
-  try {
-    const content = isDoc
-      ? await geminiService.analyzeImage({
-          base64: data.base64,
-          mimeType: data.mimeType,
-          outputLanguage: data.outputLanguage,
-        })
-      : await geminiService.transcribeAudio({ base64: data.base64, mimeType: data.mimeType });
+export interface AdvanceResult {
+  ok: true;
+  sourceId: string;
+  status: "processing" | "completed" | "failed";
+  step: string;
+  error?: { code: string; message: string };
+}
 
-    await supabase.from("transcripts").insert({
-      user_id: userId,
-      source_id: sourceId,
-      full_text: content,
-      language: data.outputLanguage,
-    });
-    await supabase.from("sources").update({ progress_step: "generating_notes" }).eq("id", sourceId);
+/**
+ * Atomically claims a pending step: flips `from` → `to`, or re-claims a `to`
+ * whose last touch is older than STEP_CLAIM_STALE_MS. Returns true if this call
+ * won the claim and should do the work.
+ */
+async function claimStep(supabase: DB, sourceId: string, from: string, to: string) {
+  const staleBefore = new Date(Date.now() - STEP_CLAIM_STALE_MS).toISOString();
+  const { data } = await supabase
+    .from("sources")
+    .update({ progress_step: to })
+    .eq("id", sourceId)
+    .or(`progress_step.eq.${from},and(progress_step.eq.${to},updated_at.lt.${staleBefore})`)
+    .select("id");
+  return !!data && data.length > 0;
+}
 
-    const notes = await geminiService.generateStudyNotes({
-      content,
-      detailLevel: data.detailLevel,
-      outputLanguage: data.outputLanguage,
-    });
-    await persistNotes(
-      supabase,
-      userId,
-      data.spaceId,
-      sourceId,
-      notes,
-      data.detailLevel,
-      data.outputLanguage,
+export async function advanceAnalysis(
+  supabase: DB,
+  userId: string,
+  data: {
+    sourceId: string;
+    outputLanguage: string;
+    base64?: string | undefined;
+    mimeType?: string | undefined;
+  },
+): Promise<AdvanceResult | { ok: false; error: { code: string; message: string } }> {
+  const { data: src, error } = await supabase
+    .from("sources")
+    .select("*")
+    .eq("id", data.sourceId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  if (!src) return { ok: false, error: { code: "not_found", message: "Source introuvable." } };
+
+  const sourceId = src.id as string;
+  const spaceId = src.space_id as string;
+  const type = src.type as string;
+  const isDoc = type === "image" || type === "pdf";
+  const detailLevel = (src.detail_level ?? "standard") as DetailLevel;
+  const outputLanguage = data.outputLanguage || (src.language as string | null) || "same";
+
+  const result = (
+    status: "processing" | "completed" | "failed",
+    step: string,
+    err?: { code: string; message: string },
+  ): AdvanceResult => ({ ok: true, sourceId, status, step, ...(err ? { error: err } : {}) });
+
+  if (src.status === "completed") return result("completed", "done");
+  if (src.status === "failed") {
+    return result(
+      "failed",
+      "failed",
+      src.error_message
+        ? { code: "failed", message: src.error_message as string }
+        : { code: "unknown", message: "Une erreur inattendue est survenue." },
     );
+  }
+
+  const [{ data: notes }, { data: transcripts }] = await Promise.all([
+    supabase
+      .from("study_notes")
+      .select("id")
+      .eq("source_id", sourceId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("transcripts")
+      .select("full_text")
+      .eq("source_id", sourceId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+  ]);
+
+  // Notes already exist → just close the row.
+  if (notes && notes.length > 0) {
     await supabase
       .from("sources")
-      .update({ status: "completed", progress_step: "done", title: notes.title || data.title })
+      .update({ status: "completed", progress_step: "done" })
       .eq("id", sourceId);
+    await touchSpace(supabase, spaceId);
+    return result("completed", "done");
+  }
+
+  const transcriptText = transcripts?.[0]?.full_text ?? "";
+  const content = transcriptText || (src.raw_text as string | null) || "";
+
+  // ---- Step 1: produce a transcript / extracted text ----
+  if (!content) {
+    if (type === "youtube" && src.original_url) {
+      if (!(await claimStep(supabase, sourceId, "transcript_pending", "transcript_running"))) {
+        return result("processing", "transcript_running");
+      }
+      try {
+        const text = await geminiService.transcribeVideo({ url: src.original_url as string });
+        await supabase.from("transcripts").delete().eq("source_id", sourceId);
+        await supabase.from("transcripts").insert({
+          user_id: userId,
+          source_id: sourceId,
+          full_text: text,
+          language: outputLanguage,
+        });
+        await supabase
+          .from("sources")
+          .update({ progress_step: "notes_pending" })
+          .eq("id", sourceId);
+        return result("processing", "notes_pending");
+      } catch (e) {
+        const p = await fail(supabase, sourceId, e);
+        return result("failed", "failed", p.error);
+      }
+    }
+
+    if (data.base64 && data.mimeType) {
+      if (!(await claimStep(supabase, sourceId, "transcript_pending", "transcript_running"))) {
+        return result("processing", "transcript_running");
+      }
+      try {
+        const text = isDoc
+          ? await geminiService.analyzeImage({
+              base64: data.base64,
+              mimeType: data.mimeType,
+              outputLanguage,
+            })
+          : await geminiService.transcribeAudio({ base64: data.base64, mimeType: data.mimeType });
+        await supabase.from("transcripts").delete().eq("source_id", sourceId);
+        await supabase.from("transcripts").insert({
+          user_id: userId,
+          source_id: sourceId,
+          full_text: text,
+          language: outputLanguage,
+        });
+        await supabase
+          .from("sources")
+          .update({ progress_step: "notes_pending" })
+          .eq("id", sourceId);
+        return result("processing", "notes_pending");
+      } catch (e) {
+        const p = await fail(supabase, sourceId, e);
+        return result("failed", "failed", p.error);
+      }
+    }
+
+    // Media source with no transcript yet and this caller has no file to send.
+    // The driver that holds the upload (or a retry) will do it. Only give up if
+    // the row has been sitting untouched long enough to be considered dead.
+    const untouchedFor = Date.now() - new Date(src.updated_at as string).getTime();
+    if (untouchedFor > STEP_CLAIM_STALE_MS) {
+      const p = await fail(
+        supabase,
+        sourceId,
+        new GeminiError("needs_reupload", "Réimporte le fichier pour relancer l'analyse.", 400),
+      );
+      return result("failed", "failed", p.error);
+    }
+    return result("processing", (src.progress_step as string) ?? "transcript_pending");
+  }
+
+  // ---- Step 2: generate the study notes ----
+  if (!(await claimStep(supabase, sourceId, "notes_pending", "notes_running"))) {
+    return result("processing", "notes_running");
+  }
+  try {
+    const generated = await geminiService.generateStudyNotes({
+      content,
+      detailLevel,
+      outputLanguage,
+    });
+    await supabase.from("study_notes").delete().eq("source_id", sourceId);
+    await persistNotes(supabase, userId, spaceId, sourceId, generated, detailLevel, outputLanguage);
+    await supabase
+      .from("sources")
+      .update({
+        status: "completed",
+        progress_step: "done",
+        title: generated.title || (src.title as string),
+      })
+      .eq("id", sourceId);
+
     await recordUsage(supabase, userId, "analysis");
-    if (!isDoc) await recordUsage(supabase, userId, "audio_minutes", minutes);
-    await touchSpace(supabase, data.spaceId);
-    return { ok: true as const, sourceId };
+    if (type === "youtube") await recordUsage(supabase, userId, "video");
+    if (type === "audio" || type === "recording") {
+      const minutes = Math.max(1, Math.ceil(((src.duration_seconds as number | null) ?? 60) / 60));
+      await recordUsage(supabase, userId, "audio_minutes", minutes);
+    }
+    await touchSpace(supabase, spaceId);
+    return result("completed", "done");
   } catch (e) {
-    return fail(supabase, sourceId, e);
+    const p = await fail(supabase, sourceId, e);
+    return result("failed", "failed", p.error);
   }
 }
 
 /**
- * Re-runs a failed (or interrupted) analysis in place, reusing the same `sources`
- * row. Works from whatever input we still have: `raw_text` for pasted text, the
- * saved transcript for audio/video/docs, or the original URL for YouTube. Uploaded
- * files aren't kept, so a media source with no transcript must be re-imported.
+ * Re-arms a failed / interrupted analysis: clears the error and resets
+ * `progress_step` so the client (and the source page) resume it via
+ * `advanceAnalysis`. Reuses whatever input survived — `raw_text` for pasted
+ * text, the saved transcript, or `original_url` for YouTube. Uploaded files
+ * aren't kept, so a media source with no transcript needs a re-import.
  */
 export async function retryAnalysis(
   supabase: DB,
@@ -301,24 +438,22 @@ export async function retryAnalysis(
     };
   }
 
-  await assertQuota(supabase, userId, "analysis");
+  try {
+    await assertQuota(supabase, userId, "analysis");
+  } catch (e) {
+    return { ok: false as const, error: errorPayload(e) };
+  }
 
   const sourceId = src.id as string;
-  const spaceId = src.space_id as string;
-  const detailLevel = (src.detail_level ?? "standard") as DetailLevel;
-  const outputLanguage = data.outputLanguage || (src.language as string | null) || "same";
-
-  let content = (src.raw_text as string | null) ?? "";
-  if (!content) {
-    const { data: tr } = await supabase
-      .from("transcripts")
-      .select("full_text")
-      .eq("source_id", sourceId)
-      .maybeSingle();
-    content = tr?.full_text ?? "";
-  }
-  const regenFromUrl = !content && src.type === "youtube" && !!src.original_url;
-  if (!content && !regenFromUrl) {
+  const { data: tr } = await supabase
+    .from("transcripts")
+    .select("full_text")
+    .eq("source_id", sourceId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const hasContent = !!(tr?.[0]?.full_text || src.raw_text);
+  const canRegenFromUrl = src.type === "youtube" && !!src.original_url;
+  if (!hasContent && !canRegenFromUrl) {
     return {
       ok: false as const,
       error: { code: "needs_reupload", message: "Réimporte le fichier pour relancer l'analyse." },
@@ -330,60 +465,12 @@ export async function retryAnalysis(
     .from("sources")
     .update({
       status: "processing",
-      progress_step: regenFromUrl ? "transcribing" : "analyzing",
+      progress_step: hasContent ? "notes_pending" : "transcript_pending",
       error_message: null,
     })
     .eq("id", sourceId);
 
-  try {
-    if (regenFromUrl) {
-      const result = await geminiService.analyzeVideo({
-        url: src.original_url as string,
-        detailLevel,
-        outputLanguage,
-      });
-      await supabase.from("transcripts").delete().eq("source_id", sourceId);
-      await supabase.from("transcripts").insert({
-        user_id: userId,
-        source_id: sourceId,
-        full_text: result.transcript,
-        language: outputLanguage,
-      });
-      await persistNotes(
-        supabase,
-        userId,
-        spaceId,
-        sourceId,
-        result.notes,
-        detailLevel,
-        outputLanguage,
-      );
-      await supabase
-        .from("sources")
-        .update({
-          status: "completed",
-          progress_step: "done",
-          title: result.notes.title || src.title,
-        })
-        .eq("id", sourceId);
-    } else {
-      const notes = await geminiService.generateStudyNotes({
-        content,
-        detailLevel,
-        outputLanguage,
-      });
-      await persistNotes(supabase, userId, spaceId, sourceId, notes, detailLevel, outputLanguage);
-      await supabase
-        .from("sources")
-        .update({ status: "completed", progress_step: "done", title: notes.title || src.title })
-        .eq("id", sourceId);
-    }
-    await recordUsage(supabase, userId, "analysis");
-    await touchSpace(supabase, spaceId);
-    return { ok: true as const, sourceId };
-  } catch (e) {
-    return fail(supabase, sourceId, e);
-  }
+  return { ok: true as const, sourceId };
 }
 
 export async function runChat(

@@ -51,6 +51,14 @@ a static export — a static build would break every Gemini-backed feature.
   client helpers in `src/lib/sources.ts` (`reclaimStaleSources`,
   `deleteSource`, `deleteSpace`). APK unchanged (loads the live URL via
   `server.url`).
+- **2026-09-04 — stepped analysis pipeline. NOT YET DEPLOYED.** Fixes the
+  analysis getting stuck on "Éléments de révision" then failing with a
+  timeout. `analyzeYouTube`/`analyzeText`/`analyzeMedia` → `startYouTube`/
+  `startText`/`startMedia` + new `advanceAnalysis` server fn; new
+  `src/lib/analysisDrive.ts`. See "Client analysis flow — stepped pipeline".
+  `bun run build` + `tsc` green. Needs the user to run
+  `npx nitro deploy --prebuilt` (classifier blocks it for the agent). APK
+  unchanged (live URL via `server.url`).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
@@ -181,25 +189,48 @@ Ne s'applique pas aux simples questions ou explorations.
   is cheap. When every model in the chain is quota-capped, the app shows the
   `quota_free_tier` message pointing there.
 
-### Client analysis flow (`MediaAnalyzer.tsx`) — known weakness
+### Client analysis flow — stepped pipeline (2026-09-04, rewrite)
 
-The progress screen steps (`upload → transcribe → analyze → notes → review`)
-are a **fake 9s ticker**, not real backend progress; the whole analysis is
-one long synchronous server fn call. Capped with a 180s client timeout so it
-can't spin forever, but the proper fix is to fire-and-navigate to
-`/sources/$sourceId` and poll `sources.status` / `progress_step` (already
-written by `pipeline.server.ts`).
+The old flow (one long synchronous server fn + a fake 9s progress ticker +
+180s client race) is **gone**. It kept timing out on the client / Worker with
+the progress bar frozen on "Éléments de révision" while the run either died or
+finished invisibly.
 
-**Interrupted analyses & retry (2026-09-04).** If the Worker is killed or the
-connection drops mid-run, the `sources` row stays `processing` forever with no
-error. `reclaimStaleSources` (`src/lib/sources.ts`, called from the space and
-source pages) flags any `processing` row older than 10 min as `failed`. The
-source page then shows a **"Relancer l'analyse"** button → `retrySource`
-server fn → `retryAnalysis` (`pipeline.server.ts`), which re-runs in place
-reusing whatever input survived: `raw_text` for pasted text, the saved
-transcript for audio/video/docs, `original_url` for YouTube. Uploaded files
-are **not** stored, so a media source that failed before a transcript existed
-returns `needs_reupload` and the UI sends the user back to `/add`.
+Now the pipeline is **split into short, client-driven steps** (see the big
+comment block in `pipeline.server.ts`):
+
+- `startYouTubeAnalysis` / `startTextAnalysis` / `startMediaAnalysis`
+  (`start*` server fns in `ai.functions.ts`) — validate + quota-check +
+  insert the `sources` row, return `{ ok, sourceId }` **instantly**, no
+  Gemini call. `startMedia` no longer receives the base64.
+- `advanceAnalysis({ sourceId, outputLanguage, base64?, mimeType? })` — does
+  **exactly one** Gemini call (transcription **or** note generation) then
+  returns `{ status, step }`. Never two back-to-back long calls in one request.
+- `src/lib/analysisDrive.ts` → `driveAnalysis()` loops `advanceAnalysis` until
+  `completed` / `failed`. Called from `MediaAnalyzer.tsx`, `add.youtube.tsx`,
+  `add.text.tsx` (with real progress on screen) **and** from
+  `sources.$sourceId.tsx` (a `useEffect` that resumes any `processing` source
+  on open). `AnalysisProgress` now renders the real `progress_step`.
+
+`progress_step` state machine:
+`transcript_pending → transcript_running → notes_pending → notes_running → done`
+(text sources start at `notes_pending`). `*_running` is an **atomic
+compare-and-set claim** (`claimStep`, via a PostgREST `.or()` on
+`progress_step` + `updated_at`); a claim untouched for `STEP_CLAIM_STALE_MS`
+(4 min) is re-claimable, so an interrupted run self-heals before
+`reclaimStaleSources` (10 min) hard-fails it. Steps are idempotent (delete
+transcript/notes before re-insert).
+
+**Media uploads are still not persisted** — only `MediaAnalyzer` holds the
+base64 (it sends it on the `transcript_*` step only). If that page is closed
+mid-transcription the file is lost: after 4 min the source page's driver, or a
+`retrySource`, returns `needs_reupload` → UI sends the user to `/add`.
+
+**Retry (2026-09-04).** `retryAnalysis` is now tiny: it just clears the error
+and resets `progress_step` (`notes_pending` if a transcript/`raw_text`
+survived, else `transcript_pending` for YouTube); the source page's driver
+picks it up. `reclaimStaleSources` (`src/lib/sources.ts`) still flags
+`processing` rows older than 10 min as `failed`.
 
 **Deleting sources & courses (2026-09-04).** `deleteSource` / `deleteSpace`
 in `src/lib/sources.ts` — plain client-side Supabase deletes (RLS `FOR ALL`

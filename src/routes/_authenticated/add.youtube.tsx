@@ -6,8 +6,13 @@ import { Info, Loader2, Youtube } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { PageHeader } from "@/components/PageHeader";
-import { AnalysisProgress, SpaceAndDetailPicker, useComposerState } from "@/components/SourceComposer";
-import { analyzeYouTube } from "@/lib/ai.functions";
+import {
+  AnalysisProgress,
+  SpaceAndDetailPicker,
+  useComposerState,
+} from "@/components/SourceComposer";
+import { advanceAnalysis, startYouTube } from "@/lib/ai.functions";
+import { driveAnalysis } from "@/lib/analysisDrive";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -15,9 +20,15 @@ export const Route = createFileRoute("/_authenticated/add/youtube")({
   head: () => ({
     meta: [
       { title: "YouTube → fiche de synthèse — StudyLoop" },
-      { name: "description", content: "Colle un lien YouTube et obtiens transcription, résumé, flashcards et quiz." },
+      {
+        name: "description",
+        content: "Colle un lien YouTube et obtiens transcription, résumé, flashcards et quiz.",
+      },
       { property: "og:title", content: "YouTube → fiche de synthèse" },
-      { property: "og:description", content: "Transforme n'importe quelle vidéo de cours en fiche de révision." },
+      {
+        property: "og:description",
+        content: "Transforme n'importe quelle vidéo de cours en fiche de révision.",
+      },
     ],
   }),
   component: YoutubePage,
@@ -28,19 +39,19 @@ function YoutubePage() {
   const state = useComposerState();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const run = useServerFn(analyzeYouTube);
+  const runStart = useServerFn(startYouTube);
+  const runAdvance = useServerFn(advanceAnalysis);
   const [url, setUrl] = useState("");
-  const [step, setStep] = useState(-1);
+  const [stage, setStage] = useState<string | null>(null);
 
   async function analyze() {
     if (!state.spaceId) {
       toast.error(t("home.noSpaces"));
       return;
     }
-    setStep(1);
-    const ticker = setInterval(() => setStep((s) => (s < 4 ? s + 1 : s)), 9000);
+    setStage("transcript_pending");
     try {
-      const result = await run({
+      const start = await runStart({
         data: {
           spaceId: state.spaceId,
           url,
@@ -48,18 +59,26 @@ function YoutubePage() {
           outputLanguage: state.outputLanguage,
         },
       });
-      if (!result.ok) {
-        toast.error(result.error?.message ?? t("error.video"));
-        setStep(-1);
+      if (!start.ok) {
+        toast.error(start.error?.message ?? t("error.video"));
+        setStage(null);
         return;
       }
+      const sourceId = start.sourceId;
+      const outcome = await driveAnalysis({
+        advance: runAdvance,
+        sourceId,
+        outputLanguage: state.outputLanguage,
+        onStep: (s) => setStage(s),
+      });
+      if (outcome.status === "failed") {
+        toast.error(outcome.error?.message ?? t("error.video"));
+      }
       queryClient.invalidateQueries();
-      navigate({ to: "/sources/$sourceId", params: { sourceId: result.sourceId } });
+      navigate({ to: "/sources/$sourceId", params: { sourceId } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("error.generic"));
-      setStep(-1);
-    } finally {
-      clearInterval(ticker);
+      setStage(null);
     }
   }
 
@@ -67,8 +86,8 @@ function YoutubePage() {
     <>
       <PageHeader title={t("youtube.title")} />
       <main className="space-y-5 px-5">
-        {step >= 0 ? (
-          <AnalysisProgress step={step} />
+        {stage !== null ? (
+          <AnalysisProgress stage={stage} />
         ) : (
           <>
             <div className="card-soft space-y-3 p-4">

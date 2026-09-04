@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,9 +10,11 @@ import { useSettings } from "@/hooks/useSettings";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { NoteView, type NoteContent } from "@/components/NoteView";
+import { AnalysisProgress } from "@/components/SourceComposer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { retrySource } from "@/lib/ai.functions";
+import { advanceAnalysis, retrySource } from "@/lib/ai.functions";
+import { driveAnalysis } from "@/lib/analysisDrive";
 import { deleteSource, reclaimStaleSources } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +63,7 @@ function SourcePage() {
   const [search, setSearch] = useState("");
 
   const runRetry = useServerFn(retrySource);
+  const runAdvance = useServerFn(advanceAnalysis);
   const outputLanguage = settings?.ai_output_language ?? "same";
 
   const query = useQuery({
@@ -68,6 +71,25 @@ function SourcePage() {
     queryFn: () => fetchSource(sourceId),
     refetchInterval: (q) => (q.state.data?.source?.status === "processing" ? 4000 : false),
   });
+
+  // Resume an interrupted / retried analysis: keep calling `advanceAnalysis`
+  // until the source is done. A media source whose upload we no longer hold
+  // comes back as `failed` with `needs_reupload`.
+  const driving = useRef(false);
+  const sourceStatus = query.data?.source?.status;
+  useEffect(() => {
+    if (sourceStatus !== "processing" || driving.current) return;
+    driving.current = true;
+    driveAnalysis({
+      advance: runAdvance,
+      sourceId,
+      outputLanguage,
+      onStep: () => queryClient.invalidateQueries({ queryKey: ["source", sourceId] }),
+    }).finally(() => {
+      driving.current = false;
+      queryClient.invalidateQueries();
+    });
+  }, [sourceStatus, sourceId, outputLanguage, runAdvance, queryClient]);
 
   const retryMutation = useMutation({
     mutationFn: async () => runRetry({ data: { sourceId, outputLanguage } }),
@@ -130,12 +152,7 @@ function SourcePage() {
           <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />
         )}
 
-        {status === "processing" && (
-          <div className="card-soft flex items-center gap-2 p-4 text-sm">
-            <Loader2 className="size-4 animate-spin text-primary" />
-            {t("status.processing")}
-          </div>
-        )}
+        {status === "processing" && <AnalysisProgress stage={data?.source?.progress_step ?? ""} />}
 
         {status === "failed" && (
           <div className="card-soft space-y-3 border-destructive/30 p-4 text-sm">

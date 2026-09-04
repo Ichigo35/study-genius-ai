@@ -5,8 +5,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { PageHeader } from "@/components/PageHeader";
-import { AnalysisProgress, SpaceAndDetailPicker, useComposerState } from "@/components/SourceComposer";
-import { analyzeText } from "@/lib/ai.functions";
+import {
+  AnalysisProgress,
+  SpaceAndDetailPicker,
+  useComposerState,
+} from "@/components/SourceComposer";
+import { advanceAnalysis, startText } from "@/lib/ai.functions";
+import { driveAnalysis } from "@/lib/analysisDrive";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,9 +21,15 @@ export const Route = createFileRoute("/_authenticated/add/text")({
   head: () => ({
     meta: [
       { title: "Coller du texte — StudyLoop" },
-      { name: "description", content: "Colle tes notes ou un chapitre de cours et obtiens une fiche de synthèse." },
+      {
+        name: "description",
+        content: "Colle tes notes ou un chapitre de cours et obtiens une fiche de synthèse.",
+      },
       { property: "og:title", content: "Coller du texte — StudyLoop" },
-      { property: "og:description", content: "Ton texte devient une fiche structurée en quelques secondes." },
+      {
+        property: "og:description",
+        content: "Ton texte devient une fiche structurée en quelques secondes.",
+      },
     ],
   }),
   component: TextPage,
@@ -29,20 +40,20 @@ function TextPage() {
   const state = useComposerState();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const run = useServerFn(analyzeText);
+  const runStart = useServerFn(startText);
+  const runAdvance = useServerFn(advanceAnalysis);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
-  const [step, setStep] = useState(-1);
+  const [stage, setStage] = useState<string | null>(null);
 
   async function analyze() {
     if (!state.spaceId) {
       toast.error(t("home.noSpaces"));
       return;
     }
-    setStep(2);
-    const ticker = setInterval(() => setStep((s) => (s < 4 ? s + 1 : s)), 7000);
+    setStage("notes_pending");
     try {
-      const result = await run({
+      const start = await runStart({
         data: {
           spaceId: state.spaceId,
           title: title.trim() || text.slice(0, 40),
@@ -51,18 +62,26 @@ function TextPage() {
           outputLanguage: state.outputLanguage,
         },
       });
-      if (!result.ok) {
-        toast.error(result.error?.message ?? t("error.generic"));
-        setStep(-1);
+      if (!start.ok) {
+        toast.error(start.error?.message ?? t("error.generic"));
+        setStage(null);
         return;
       }
+      const sourceId = start.sourceId;
+      const outcome = await driveAnalysis({
+        advance: runAdvance,
+        sourceId,
+        outputLanguage: state.outputLanguage,
+        onStep: (s) => setStage(s),
+      });
+      if (outcome.status === "failed") {
+        toast.error(outcome.error?.message ?? t("error.generic"));
+      }
       queryClient.invalidateQueries();
-      navigate({ to: "/sources/$sourceId", params: { sourceId: result.sourceId } });
+      navigate({ to: "/sources/$sourceId", params: { sourceId } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("error.generic"));
-      setStep(-1);
-    } finally {
-      clearInterval(ticker);
+      setStage(null);
     }
   }
 
@@ -70,8 +89,8 @@ function TextPage() {
     <>
       <PageHeader title={t("text.title")} />
       <main className="space-y-5 px-5">
-        {step >= 0 ? (
-          <AnalysisProgress step={step} />
+        {stage !== null ? (
+          <AnalysisProgress stage={stage} />
         ) : (
           <>
             <div className="space-y-1.5">
@@ -90,7 +109,11 @@ function TextPage() {
               className="min-h-52 rounded-2xl"
             />
             <SpaceAndDetailPicker state={state} />
-            <Button className="h-12 w-full rounded-xl text-base" disabled={text.trim().length < 30} onClick={analyze}>
+            <Button
+              className="h-12 w-full rounded-xl text-base"
+              disabled={text.trim().length < 30}
+              onClick={analyze}
+            >
               {t("text.analyze")}
             </Button>
           </>

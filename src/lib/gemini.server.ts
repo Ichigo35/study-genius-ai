@@ -340,12 +340,9 @@ ${input.content}`,
     return parseJson<StudyNoteContent>(raw);
   },
 
-  async analyzeVideo(input: {
-    url: string;
-    detailLevel: DetailLevel;
-    outputLanguage: string;
-  }): Promise<{ transcript: string; notes: StudyNoteContent }> {
-    const transcript = await callGemini({
+  /** Transcription only — note generation is a separate pipeline step. */
+  async transcribeVideo(input: { url: string }): Promise<string> {
+    return callGemini({
       models: MODELS.multimodal,
       parts: [
         { fileData: { fileUri: input.url } },
@@ -355,12 +352,6 @@ ${input.content}`,
       ],
       temperature: 0.2,
     });
-    const notes = await this.generateStudyNotes({
-      content: transcript,
-      detailLevel: input.detailLevel,
-      outputLanguage: input.outputLanguage,
-    });
-    return { transcript, notes };
   },
 
   async transcribeAudio(input: { base64: string; mimeType: string }): Promise<string> {

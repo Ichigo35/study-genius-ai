@@ -5,8 +5,15 @@ import { useI18n } from "@/i18n";
 import { fetchSpaces } from "@/lib/spaces";
 import { useSettings } from "@/hooks/useSettings";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ProcessingSteps } from "@/components/ProcessingSteps";
+import { stageToIndex } from "@/lib/analysisDrive";
 import { cn } from "@/lib/utils";
 
 export type DetailLevel = "quick" | "standard" | "detailed" | "exam";
@@ -31,11 +38,7 @@ export function useComposerState() {
   };
 }
 
-export function SpaceAndDetailPicker({
-  state,
-}: {
-  state: ReturnType<typeof useComposerState>;
-}) {
+export function SpaceAndDetailPicker({ state }: { state: ReturnType<typeof useComposerState> }) {
   const { t } = useI18n();
   const levels: DetailLevel[] = ["quick", "standard", "detailed", "exam"];
 
@@ -81,7 +84,7 @@ export function SpaceAndDetailPicker({
   );
 }
 
-export function AnalysisProgress({ step }: { step: number }) {
+export function AnalysisProgress({ stage }: { stage: string }) {
   const { t } = useI18n();
   return (
     <div className="card-soft animate-rise p-5">
@@ -97,7 +100,7 @@ export function AnalysisProgress({ step }: { step: number }) {
           t("processing.step.notes"),
           t("processing.step.review"),
         ]}
-        current={step}
+        current={stageToIndex(stage)}
       />
       <p className="mt-4 text-xs text-muted-foreground">{t("processing.keepOpen")}</p>
     </div>

@@ -12,7 +12,7 @@ export const getUsage = createServerFn({ method: "GET" })
     return getUsageSnapshot(context.supabase, context.userId);
   });
 
-export const analyzeYouTube = createServerFn({ method: "POST" })
+export const startYouTube = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
@@ -25,11 +25,11 @@ export const analyzeYouTube = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const { runYouTubeAnalysis } = await import("./pipeline.server");
-    return runYouTubeAnalysis(context.supabase, context.userId, data);
+    const { startYouTubeAnalysis } = await import("./pipeline.server");
+    return startYouTubeAnalysis(context.supabase, context.userId, data);
   });
 
-export const analyzeText = createServerFn({ method: "POST" })
+export const startText = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
@@ -43,11 +43,11 @@ export const analyzeText = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const { runTextAnalysis } = await import("./pipeline.server");
-    return runTextAnalysis(context.supabase, context.userId, data);
+    const { startTextAnalysis } = await import("./pipeline.server");
+    return startTextAnalysis(context.supabase, context.userId, data);
   });
 
-export const analyzeMedia = createServerFn({ method: "POST" })
+export const startMedia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z
@@ -56,7 +56,6 @@ export const analyzeMedia = createServerFn({ method: "POST" })
         title: z.string().min(1).max(200),
         kind: z.enum(["audio", "recording", "image", "pdf"]),
         mimeType: z.string().min(3),
-        base64: z.string().min(100),
         durationSeconds: z.number().int().min(0).max(36000).optional(),
         detailLevel: detail,
         outputLanguage: lang,
@@ -64,8 +63,25 @@ export const analyzeMedia = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const { runMediaAnalysis } = await import("./pipeline.server");
-    return runMediaAnalysis(context.supabase, context.userId, data);
+    const { startMediaAnalysis } = await import("./pipeline.server");
+    return startMediaAnalysis(context.supabase, context.userId, data);
+  });
+
+export const advanceAnalysis = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        sourceId: z.string().uuid(),
+        outputLanguage: lang,
+        base64: z.string().min(100).optional(),
+        mimeType: z.string().min(3).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { advanceAnalysis: advance } = await import("./pipeline.server");
+    return advance(context.supabase, context.userId, data);
   });
 
 export const retrySource = createServerFn({ method: "POST" })

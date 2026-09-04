@@ -4,9 +4,14 @@ import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { analyzeMedia, analyzeText } from "@/lib/ai.functions";
+import { advanceAnalysis, startMedia, startText } from "@/lib/ai.functions";
+import { driveAnalysis } from "@/lib/analysisDrive";
 import { fileToBase64, MAX_UPLOAD_BYTES } from "@/lib/spaces";
-import { AnalysisProgress, SpaceAndDetailPicker, useComposerState } from "@/components/SourceComposer";
+import {
+  AnalysisProgress,
+  SpaceAndDetailPicker,
+  useComposerState,
+} from "@/components/SourceComposer";
 import { Button } from "@/components/ui/button";
 
 type Kind = "audio" | "recording" | "image" | "pdf";
@@ -16,9 +21,11 @@ export function useMediaAnalyzer() {
   const state = useComposerState();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const runMedia = useServerFn(analyzeMedia);
-  const runText = useServerFn(analyzeText);
-  const [step, setStep] = useState(-1);
+  const runStartMedia = useServerFn(startMedia);
+  const runStartText = useServerFn(startText);
+  const runAdvance = useServerFn(advanceAnalysis);
+  // null = idle, otherwise the current server `progress_step`.
+  const [stage, setStage] = useState<string | null>(null);
 
   async function analyze(payload: {
     file: Blob;
@@ -35,17 +42,13 @@ export function useMediaAnalyzer() {
       toast.error(t("error.tooLarge"));
       return;
     }
-    setStep(0);
-    const ticker = setInterval(() => setStep((s) => (s < 4 ? s + 1 : s)), 9000);
-    // Hard ceiling so the progress screen can't spin forever if the server
-    // stalls or the connection is silently dropped.
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(t("error.analysisTimeout"))), 180_000),
-    );
+
+    const isPlainText = payload.mimeType.startsWith("text/");
+    setStage(isPlainText ? "notes_pending" : "transcript_pending");
+
     try {
-      const isPlainText = payload.mimeType.startsWith("text/");
-      const request = isPlainText
-        ? runText({
+      const start = isPlainText
+        ? await runStartText({
             data: {
               spaceId: state.spaceId,
               title: payload.fileName,
@@ -54,36 +57,51 @@ export function useMediaAnalyzer() {
               outputLanguage: state.outputLanguage,
             },
           })
-        : runMedia({
+        : await runStartMedia({
             data: {
               spaceId: state.spaceId,
               title: payload.fileName,
               kind: payload.kind,
               mimeType: payload.mimeType,
-              base64: await fileToBase64(payload.file),
               durationSeconds: payload.durationSeconds,
               detailLevel: state.detailLevel,
               outputLanguage: state.outputLanguage,
             },
           });
-      const result = await Promise.race([request, timeout]);
 
-      if (!result.ok) {
-        toast.error(result.error?.message ?? t("error.generic"));
-        setStep(-1);
+      if (!start.ok) {
+        toast.error(start.error?.message ?? t("error.generic"));
+        setStage(null);
         return;
       }
+
+      const sourceId = start.sourceId;
+      const fileParts = isPlainText
+        ? undefined
+        : { base64: await fileToBase64(payload.file), mimeType: payload.mimeType };
+
+      const outcome = await driveAnalysis({
+        advance: runAdvance,
+        sourceId,
+        outputLanguage: state.outputLanguage,
+        getFileParts: fileParts ? () => fileParts : undefined,
+        onStep: (step) => setStage(step),
+      });
+
+      if (outcome.status === "failed") {
+        toast.error(outcome.error?.message ?? t("error.generic"));
+      }
+      // Whatever the outcome, the source page shows the result / a retry button
+      // and keeps driving an unfinished run.
       queryClient.invalidateQueries();
-      navigate({ to: "/sources/$sourceId", params: { sourceId: result.sourceId } });
+      navigate({ to: "/sources/$sourceId", params: { sourceId } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("error.generic"));
-      setStep(-1);
-    } finally {
-      clearInterval(ticker);
+      setStage(null);
     }
   }
 
-  return { state, step, analyze };
+  return { state, stage, analyze };
 }
 
 export function AnalyzerShell({
@@ -99,10 +117,10 @@ export function AnalyzerShell({
   disabled: boolean;
   submitLabel: string;
 }) {
-  if (analyzer.step >= 0) {
+  if (analyzer.stage !== null) {
     return (
       <main className="px-5">
-        <AnalysisProgress step={analyzer.step} />
+        <AnalysisProgress stage={analyzer.stage} />
       </main>
     );
   }
