@@ -157,3 +157,25 @@ export const createQuiz = createServerFn({ method: "POST" })
     const { runQuiz } = await import("./pipeline.server");
     return runQuiz(context.supabase, context.userId, data);
   });
+
+export const translateFlashcards = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ flashcardIds: z.array(z.string().uuid()).min(1).max(60), language: lang }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
+    const { startFlashcardsTranslation } = await import("./pipeline.server");
+    const authHeader = getRequestHeader("authorization") ?? undefined;
+    return startFlashcardsTranslation(context.supabase, context.userId, { ...data, authHeader });
+  });
+
+export const translateQuiz = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ quizId: z.string().uuid(), language: lang }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { getRequestHeader } = await import("@tanstack/react-start/server");
+    const { startQuizTranslation } = await import("./pipeline.server");
+    const authHeader = getRequestHeader("authorization") ?? undefined;
+    return startQuizTranslation(context.supabase, context.userId, { ...data, authHeader });
+  });

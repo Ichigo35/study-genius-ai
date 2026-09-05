@@ -19,6 +19,12 @@ export const CONTENT_LANGUAGES: ContentLanguage[] = [
   { code: "ja", flag: "🇯🇵", label: "日本語" },
 ];
 
+// "original" keeps whatever language the content was generated/stored in.
+export const VIEW_LANGUAGES = [
+  { code: "original", flag: "🌐" },
+  ...CONTENT_LANGUAGES.map((l) => ({ code: l.code, flag: l.flag })),
+];
+
 export function languageFlag(code: string): string {
   return CONTENT_LANGUAGES.find((l) => l.code === code)?.flag ?? "🌐";
 }

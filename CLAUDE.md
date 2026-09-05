@@ -220,6 +220,49 @@ a static export — a static build would break every Gemini-backed feature.
   still uses `ai_output_language`. `gemini.server.ts` `LANG_NAMES` extended
   with zh/ko/ja/es/de/vi so those targets work for chat/flashcards/quiz too.
 
+- **2026-09-05 — flashcards/quiz language selector + on-demand translation
+  in the review/quiz views. LIVE after next deploy.** Two gaps fixed:
+  1. **Generation-time language was already wired correctly** (see the entry
+     above) but was easy to lose track of once cards existed — there was no
+     way to see or change a flashcard/quiz's language after the fact, and old
+     decks stayed frozen in whatever language they were generated in. The
+     `languageInstruction()` prompt in `gemini.server.ts` was also weakened by
+     being a single trailing sentence after a large source-language block of
+     content; it's now emphatic ("Write the ENTIRE output in X, regardless of
+     the language of the source content… never mix languages.") to make
+     Gemini actually honor the target language instead of drifting to the
+     source's language.
+  2. **New in-view language switcher + translate action**, mirroring the
+     source-page fiche/transcript pattern (`content_translations` /
+     `translate-source`):
+     - `flashcards.language` / `quizzes.language` columns now persist the
+       language a deck was generated in (migration
+       `20260905090000_flashcard_quiz_translations.sql`).
+     - New tables `flashcard_translations` (`UNIQUE(flashcard_id, language)`)
+       and `quiz_translations` (`UNIQUE(quiz_id, language)`, whole quiz
+       translated as one JSONB `questions` blob so `correctAnswer` stays in
+       sync with the translated `options`), same `pending/ready/failed`
+       status shape as `content_translations`, owner RLS.
+     - New Edge Function **`translate-study`** (Singapore, `verify_jwt:
+       false`, `thinkingBudget: 0`, `TEXT_CHAIN`) — `POST { kind:
+       "flashcards", flashcardIds[], language }` or `{ kind: "quiz", quizId,
+       language }`. Deployed via `mcp__supabase__deploy_edge_function`.
+     - Worker server fns `translateFlashcards` (takes `flashcardIds[]`, not
+       `spaceId` — the review deck spans multiple spaces) and `translateQuiz`
+       in `ai.functions.ts` → `startFlashcardsTranslation` /
+       `startQuizTranslation` in `pipeline.server.ts`, same
+       mark-pending-then-kick-and-return-fast shape as `startTranslation`.
+     - UI: `review.tsx` and `quizzes.$quizId.tsx` both gained a
+       `VIEW_LANGUAGES` (new export in `languages.ts`) picker; picking a
+       language kicks the translation and swaps in the translated
+       front/back (or question/options/correctAnswer/explanation) once
+       `ready`, polling every 3s while `pending`. Changing the quiz's
+       language resets in-progress answers (the correct-answer string
+       changes after translation). `src/integrations/supabase/types.ts`
+       regenerated for the new tables/columns.
+  - Requires a Worker redeploy to take effect (build + patch-placement done,
+    `npx nitro deploy --prebuilt` still pending — the agent can't run it).
+
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
 Audited the 14 `public.*` tables from `supabase/migrations/*` against the live

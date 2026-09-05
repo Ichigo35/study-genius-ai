@@ -562,7 +562,11 @@ const LANG_NAMES: Record<string, string> = {
 };
 
 function languageInstruction(outputLanguage: string) {
-  return `Write the entire output in ${LANG_NAMES[outputLanguage] ?? LANG_NAMES["same"]}.`;
+  const name = LANG_NAMES[outputLanguage] ?? LANG_NAMES["same"];
+  if (outputLanguage === "same" || !LANG_NAMES[outputLanguage]) {
+    return `Write the entire output in ${name}.`;
+  }
+  return `IMPORTANT: Write the ENTIRE output in ${name}, regardless of the language of the source content below — every title, question, answer and explanation must be in ${name}. Never mix languages.`;
 }
 
 function detailInstruction(level: DetailLevel) {

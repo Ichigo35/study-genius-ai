@@ -336,6 +336,128 @@ export async function startTranslation(
   return { ok: true, kinds };
 }
 
+/**
+ * Kicks the `translate-study` Edge Function (Singapore) to translate a set of
+ * flashcards, or a whole quiz, into `language`. Same rationale as
+ * `kickTranslator` — Gemini is geo-blocked from the Worker's region.
+ */
+async function kickStudyTranslator(body: Record<string, unknown>, authHeader?: string) {
+  const url = process.env["SUPABASE_URL"];
+  const anon = process.env["SUPABASE_PUBLISHABLE_KEY"];
+  const gemKey = process.env["GEMINI_API_KEY"]
+    ?.trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
+  if (!url || !gemKey || !authHeader) {
+    console.error("[translateStudy] cannot kick translator — missing url/key/auth");
+    return;
+  }
+  try {
+    const res = await fetch(`${url}/functions/v1/translate-study`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: authHeader,
+        ...(anon ? { apikey: anon } : {}),
+        "x-gemini-key": gemKey,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) console.error(`[translateStudy] translator kick → ${res.status}`);
+  } catch (e) {
+    console.error("[translateStudy] translator kick failed:", e);
+  }
+}
+
+export async function startFlashcardsTranslation(
+  supabase: DB,
+  userId: string,
+  data: { flashcardIds: string[]; language: string; authHeader?: string | undefined },
+): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> {
+  const { data: cards, error } = await supabase
+    .from("flashcards")
+    .select("id")
+    .in("id", data.flashcardIds)
+    .eq("user_id", userId);
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  if (!cards || cards.length === 0) {
+    return { ok: false, error: { code: "not_found", message: "Aucune flashcard à traduire." } };
+  }
+
+  const { data: existing } = await supabase
+    .from("flashcard_translations")
+    .select("flashcard_id, status")
+    .in(
+      "flashcard_id",
+      cards.map((c) => c.id),
+    )
+    .eq("language", data.language);
+  const ready = new Set(
+    (existing ?? []).filter((r) => r.status === "ready").map((r) => r.flashcard_id as string),
+  );
+  const pending = cards.filter((c) => !ready.has(c.id));
+  if (pending.length === 0) return { ok: true };
+
+  for (const c of pending) {
+    await supabase.from("flashcard_translations").upsert(
+      {
+        user_id: userId,
+        flashcard_id: c.id,
+        language: data.language,
+        status: "pending",
+        error_message: null,
+      },
+      { onConflict: "flashcard_id,language" },
+    );
+  }
+
+  await kickStudyTranslator(
+    { kind: "flashcards", flashcardIds: pending.map((c) => c.id), language: data.language },
+    data.authHeader,
+  );
+  return { ok: true };
+}
+
+export async function startQuizTranslation(
+  supabase: DB,
+  userId: string,
+  data: { quizId: string; language: string; authHeader?: string | undefined },
+): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> {
+  const { data: quiz, error } = await supabase
+    .from("quizzes")
+    .select("id, user_id")
+    .eq("id", data.quizId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return { ok: false, error: { code: "db", message: error.message } };
+  if (!quiz) return { ok: false, error: { code: "not_found", message: "Quiz introuvable." } };
+
+  const { data: existing } = await supabase
+    .from("quiz_translations")
+    .select("status")
+    .eq("quiz_id", data.quizId)
+    .eq("language", data.language)
+    .maybeSingle();
+  if (existing?.status === "ready") return { ok: true };
+
+  await supabase.from("quiz_translations").upsert(
+    {
+      user_id: userId,
+      quiz_id: data.quizId,
+      language: data.language,
+      status: "pending",
+      error_message: null,
+    },
+    { onConflict: "quiz_id,language" },
+  );
+
+  await kickStudyTranslator(
+    { kind: "quiz", quizId: data.quizId, language: data.language },
+    data.authHeader,
+  );
+  return { ok: true };
+}
+
 export async function advanceAnalysis(
   supabase: DB,
   userId: string,
@@ -519,11 +641,15 @@ export async function runFlashcards(
     count: data.count,
     outputLanguage: data.outputLanguage,
   });
-  const { error } = await supabase
-    .from("flashcards")
-    .insert(
-      cards.map((c) => ({ user_id: userId, space_id: data.spaceId, front: c.front, back: c.back })),
-    );
+  const { error } = await supabase.from("flashcards").insert(
+    cards.map((c) => ({
+      user_id: userId,
+      space_id: data.spaceId,
+      front: c.front,
+      back: c.back,
+      language: data.outputLanguage,
+    })),
+  );
   if (error) throw new GeminiError("db", error.message, 500);
   await recordUsage(supabase, userId, "analysis");
   await touchSpace(supabase, data.spaceId);
@@ -553,6 +679,7 @@ export async function runQuiz(
       space_id: data.spaceId,
       title: `Quiz — ${new Date().toLocaleDateString()}`,
       question_count: questions.length,
+      language: data.outputLanguage,
     })
     .select("id")
     .single();
