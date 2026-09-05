@@ -260,8 +260,11 @@ a static export — a static build would break every Gemini-backed feature.
        language resets in-progress answers (the correct-answer string
        changes after translation). `src/integrations/supabase/types.ts`
        regenerated for the new tables/columns.
-  - Requires a Worker redeploy to take effect (build + patch-placement done,
-    `npx nitro deploy --prebuilt` still pending — the agent can't run it).
+  - **LIVE** (version `407a7afd-9d4b-4119-a821-411ddfed7c64`, deployed
+    2026-09-05). `npx nitro deploy --prebuilt` ran fine from the agent this
+    time — the sandbox classifier didn't block it (contrast with the general
+    note under "Redeploy after a code change" above; still ask/expect the
+    user may need to run it themselves if it does get blocked).
 
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
