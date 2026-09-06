@@ -281,13 +281,13 @@ export async function startTranslation(
   const [{ data: notes }, { data: trs }, { data: existing }] = await Promise.all([
     supabase
       .from("study_notes")
-      .select("id")
+      .select("id, content, language")
       .eq("source_id", data.sourceId)
       .order("created_at", { ascending: false })
       .limit(1),
     supabase
       .from("transcripts")
-      .select("full_text")
+      .select("full_text, language")
       .eq("source_id", data.sourceId)
       .order("created_at", { ascending: false })
       .limit(1),
@@ -314,7 +314,49 @@ export async function startTranslation(
   const ready = new Set(
     (existing ?? []).filter((r) => r.status === "ready").map((r) => r.kind as string),
   );
-  const kinds = available.filter((k) => !ready.has(k));
+  let kinds = available.filter((k) => !ready.has(k));
+  if (kinds.length === 0) return { ok: true, kinds: [] };
+
+  // Free shortcut: if the note / transcript was already generated in the
+  // requested language, store it verbatim as the "translation" — no Gemini call.
+  const sameLang: string[] = [];
+  if (kinds.includes("note") && notes?.[0]?.language === data.language && notes[0].content) {
+    await supabase.from("content_translations").upsert(
+      {
+        user_id: userId,
+        source_id: data.sourceId,
+        kind: "note",
+        language: data.language,
+        status: "ready",
+        content: notes[0].content,
+        text: null,
+        error_message: null,
+      },
+      { onConflict: "source_id,kind,language" },
+    );
+    sameLang.push("note");
+  }
+  if (
+    kinds.includes("transcript") &&
+    trs?.[0]?.language === data.language &&
+    trs[0].full_text?.trim()
+  ) {
+    await supabase.from("content_translations").upsert(
+      {
+        user_id: userId,
+        source_id: data.sourceId,
+        kind: "transcript",
+        language: data.language,
+        status: "ready",
+        text: trs[0].full_text,
+        content: null,
+        error_message: null,
+      },
+      { onConflict: "source_id,kind,language" },
+    );
+    sameLang.push("transcript");
+  }
+  kinds = kinds.filter((k) => !sameLang.includes(k));
   if (kinds.length === 0) return { ok: true, kinds: [] };
 
   // Mark rows pending right away so the UI shows progress without a flicker.
@@ -376,7 +418,7 @@ export async function startFlashcardsTranslation(
 ): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> {
   const { data: cards, error } = await supabase
     .from("flashcards")
-    .select("id")
+    .select("id, front, back, language")
     .in("id", data.flashcardIds)
     .eq("user_id", userId);
   if (error) return { ok: false, error: { code: "db", message: error.message } };
@@ -395,7 +437,27 @@ export async function startFlashcardsTranslation(
   const ready = new Set(
     (existing ?? []).filter((r) => r.status === "ready").map((r) => r.flashcard_id as string),
   );
-  const pending = cards.filter((c) => !ready.has(c.id));
+  let pending = cards.filter((c) => !ready.has(c.id));
+  if (pending.length === 0) return { ok: true };
+
+  // Free shortcut: cards already generated in the requested language are stored
+  // verbatim as their own "translation" — no Gemini call.
+  const verbatim = pending.filter((c) => c.language === data.language);
+  for (const c of verbatim) {
+    await supabase.from("flashcard_translations").upsert(
+      {
+        user_id: userId,
+        flashcard_id: c.id,
+        language: data.language,
+        status: "ready",
+        front: c.front,
+        back: c.back,
+        error_message: null,
+      },
+      { onConflict: "flashcard_id,language" },
+    );
+  }
+  pending = pending.filter((c) => c.language !== data.language);
   if (pending.length === 0) return { ok: true };
 
   for (const c of pending) {
@@ -425,7 +487,7 @@ export async function startQuizTranslation(
 ): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> {
   const { data: quiz, error } = await supabase
     .from("quizzes")
-    .select("id, user_id")
+    .select("id, user_id, language")
     .eq("id", data.quizId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -439,6 +501,38 @@ export async function startQuizTranslation(
     .eq("language", data.language)
     .maybeSingle();
   if (existing?.status === "ready") return { ok: true };
+
+  // Free shortcut: quiz already generated in the requested language — store its
+  // questions verbatim as the "translation", no Gemini call.
+  if (quiz.language === data.language) {
+    const { data: qs } = await supabase
+      .from("quiz_questions")
+      .select("id, position, type, question, options, correct_answer, explanation")
+      .eq("quiz_id", data.quizId)
+      .order("position", { ascending: true });
+    if (qs && qs.length > 0) {
+      await supabase.from("quiz_translations").upsert(
+        {
+          user_id: userId,
+          quiz_id: data.quizId,
+          language: data.language,
+          status: "ready",
+          questions: qs.map((q) => ({
+            id: q.id,
+            position: q.position,
+            type: q.type,
+            question: q.question,
+            options: q.options ?? [],
+            correctAnswer: q.correct_answer,
+            explanation: q.explanation ?? "",
+          })),
+          error_message: null,
+        },
+        { onConflict: "quiz_id,language" },
+      );
+      return { ok: true };
+    }
+  }
 
   await supabase.from("quiz_translations").upsert(
     {

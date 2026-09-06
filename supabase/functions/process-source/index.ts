@@ -125,15 +125,21 @@ async function callGemini(
   const deadline = Date.now() + (opts.totalBudgetMs ?? 220_000);
   const timeoutMs = opts.timeoutMs ?? 110_000;
   let last = new GeminiError("unknown", "Erreur inconnue du service AI.");
+  // Force model "thinking" OFF on the thinking-capable flash models — it was
+  // making the notes step take minutes and burn the small daily quota. Lite
+  // models don't think and 400 on thinkingConfig, so we don't send it to them.
+  let dropThinking = false;
 
   for (let i = 0; i < opts.models.length; i++) {
     const model = opts.models[i];
     if (deadline - Date.now() < 15_000) throw last;
 
+    const sentThinking = !dropThinking && !/lite/i.test(model ?? "");
     const body: Record<string, unknown> = {
       contents: [{ role: "user", parts: opts.parts }],
       generationConfig: {
         temperature: opts.temperature ?? 0.4,
+        ...(sentThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
         ...(opts.schema
           ? { responseMimeType: "application/json", responseSchema: opts.schema }
           : {}),
@@ -175,6 +181,17 @@ async function callGemini(
       } else if (/User location is not supported|FAILED_PRECONDITION/i.test(text)) {
         // Should not happen from Singapore, but surface it clearly if it does.
         throw new GeminiError("geo_blocked", "Google bloque l'API Gemini pour cette région.");
+      } else if (
+        res.status === 400 &&
+        sentThinking &&
+        !/api[_ ]?key|API_KEY_INVALID/i.test(text)
+      ) {
+        // Model rejects thinkingConfig with no useful detail — drop it and
+        // retry the same model once.
+        console.error(`[gemini] "${model}" 400 with thinkingConfig → retry without it`);
+        dropThinking = true;
+        i--;
+        continue;
       } else if (res.status === 400 || res.status === 401 || res.status === 403) {
         throw new GeminiError("auth", `Requête Gemini refusée (${res.status}): ${text.slice(0, 200)}`);
       } else {

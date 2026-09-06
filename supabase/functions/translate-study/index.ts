@@ -22,12 +22,15 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-const TEXT_CHAIN = [
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
+// Translation is a mechanical rewrite, not a reasoning task: a lite model does
+// it well, faster, and spends the *large* free-tier bucket instead of the tiny
+// gemini-3.6-flash one (~20/day). Lite-first.
+const TRANSLATE_CHAIN = [
+  "gemini-flash-lite-latest",
   "gemini-3.5-flash-lite",
   "gemini-flash-latest",
-  "gemini-flash-lite-latest",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
 ];
 
 const LANG_NAME: Record<string, string> = {
@@ -83,7 +86,11 @@ async function callGemini(
         contents: [{ role: "user", parts: opts.parts }],
         generationConfig: {
           temperature: opts.temperature ?? 0.3,
-          ...(dropThinking ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
+          // Lite models don't "think" and 400 on thinkingConfig — only send it
+          // to the thinking-capable flash models (to force thinking OFF there).
+          ...(dropThinking || /lite/i.test(model)
+            ? {}
+            : { thinkingConfig: { thinkingBudget: 0 } }),
           ...(opts.schema
             ? { responseMimeType: "application/json", responseSchema: opts.schema }
             : {}),
@@ -118,12 +125,15 @@ async function callGemini(
         if (/User location is not supported|FAILED_PRECONDITION/i.test(text)) {
           throw new GeminiError("geo_blocked", "Google bloque l'API Gemini pour cette région.");
         }
-        if (res.status === 400 && !dropThinking) {
+        if (/api[_ ]?key|API_KEY_INVALID/i.test(text) || res.status === 401 || res.status === 403) {
+          throw new GeminiError("auth", `Requête Gemini refusée (${res.status}): ${text.slice(0, 200)}`);
+        }
+        if (res.status === 400 && !dropThinking && !/lite/i.test(model)) {
           dropThinking = true;
           return attempt();
         }
-        if (res.status === 400 || res.status === 401 || res.status === 403) {
-          throw new GeminiError("auth", `Requête Gemini refusée (${res.status}): ${text.slice(0, 200)}`);
+        if (res.status === 400) {
+          throw new GeminiError("model_unavailable", `Requête refusée par "${model}".`);
         }
         throw new GeminiError("upstream", `Erreur Gemini ${res.status}.`);
       } catch (e) {
@@ -203,23 +213,26 @@ async function translateFlashcards(
   };
 
   const raw = await callGemini(key, {
-    models: TEXT_CHAIN,
+    models: TRANSLATE_CHAIN,
     schema,
     temperature: 0.2,
-    timeoutMs: 90_000,
-    totalBudgetMs: 150_000,
+    timeoutMs: 60_000,
+    totalBudgetMs: 120_000,
     system: TRANSLATOR_SYSTEM,
     parts: [
       {
-        text: `Translate every "front" and "back" value below into ${langName(language)}.
+        text: `Translate every "front" and "back" value in the flashcards below.
 Rules:
 - Keep the exact same "id" for every card, unchanged.
 - Keep the same number of cards, same order.
-- Front = a precise question, back = a clear short answer, both in natural, fluent ${langName(language)}.
+- Front = a precise question, back = a clear short answer.
 - Keep proper nouns, acronyms, numbers, dates and formulas unchanged.
 
 --- CARDS (JSON) ---
-${JSON.stringify(cards)}`,
+${JSON.stringify(cards)}
+
+--- TARGET LANGUAGE ---
+Translate every "front" and "back" into natural, fluent ${langName(language)}. Output JSON only.`,
       },
     ],
   });
@@ -291,25 +304,29 @@ async function translateQuiz(
   }));
 
   const raw = await callGemini(key, {
-    models: TEXT_CHAIN,
+    models: TRANSLATE_CHAIN,
     schema,
     temperature: 0.2,
-    timeoutMs: 90_000,
-    totalBudgetMs: 150_000,
+    timeoutMs: 60_000,
+    totalBudgetMs: 120_000,
     system: TRANSLATOR_SYSTEM,
     parts: [
       {
-        text: `Translate the quiz questions below into ${langName(language)}.
+        text: `Translate the quiz questions below.
 Rules:
 - Keep the exact same "id" for every question, unchanged.
 - Keep the same number of questions and options per question, same order.
 - "correctAnswer" MUST be exactly equal (after translation) to one of the translated "options" for that question.
-- For true/false questions, translate "true"/"false" into their ${langName(language)} equivalents consistently across options and correctAnswer.
+- For true/false questions, translate "true"/"false" consistently across options and correctAnswer.
 - Keep proper nouns, acronyms, numbers, dates and formulas unchanged.
-- Natural, fluent ${langName(language)} suitable for a student.
 
 --- QUESTIONS (JSON) ---
-${JSON.stringify(source)}`,
+${JSON.stringify(source)}
+
+--- TARGET LANGUAGE ---
+Translate every question, option, correctAnswer and explanation into natural, fluent ${langName(
+          language,
+        )} suitable for a student. Output JSON only.`,
       },
     ],
   });

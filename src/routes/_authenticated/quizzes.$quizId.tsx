@@ -99,7 +99,7 @@ function QuizPage() {
     queryKey: ["quiz-translation", quizId, viewLang],
     queryFn: () => fetchQuizTranslation(quizId, viewLang),
     enabled: translated,
-    refetchInterval: (q) => (q.state.data?.status === "pending" ? 3000 : false),
+    refetchInterval: (q) => (q.state.data?.status === "pending" ? 2000 : false),
   });
 
   const translateMutation = useMutation({

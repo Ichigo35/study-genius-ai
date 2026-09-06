@@ -110,7 +110,7 @@ function ReviewPage() {
     queryFn: () => fetchCardTranslations(ids, viewLang),
     enabled: translated && ids.length > 0,
     refetchInterval: (q) =>
-      (q.state.data ?? []).some((r) => r.status === "pending") ? 3000 : false,
+      (q.state.data ?? []).some((r) => r.status === "pending") ? 2000 : false,
   });
 
   const translateMutation = useMutation({

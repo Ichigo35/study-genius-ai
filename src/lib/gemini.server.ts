@@ -34,6 +34,17 @@ const DEFAULT_MULTIMODAL_CHAIN = [
   "gemini-3.5-flash",
   "gemini-3.6-flash",
 ].join(",");
+// Light tasks (flashcards / quiz generation, translation-like transforms):
+// SPEED + quota first. These are mechanical rewrites, not reasoning — a lite
+// model does them well in a fraction of the time and spends the *large* free
+// bucket instead of the tiny gemini-3.6-flash one (~20/day).
+const DEFAULT_LIGHT_CHAIN = [
+  "gemini-flash-lite-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-latest",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
+].join(",");
 // Vertex uses its own model ids (no `-latest` aliases, no 3.x previews).
 const DEFAULT_VERTEX_CHAIN = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"].join(
   ",",
@@ -48,16 +59,16 @@ function parseChain(env: string | undefined, fallback: string): string[] {
 }
 
 // Read per-call: on Workers `process.env` is only populated inside a request.
-function models(kind: "text" | "multimodal"): string[] {
+function models(kind: "text" | "multimodal" | "light"): string[] {
   if (vertexConfig()) {
     return parseChain(
       process.env[kind === "text" ? "VERTEX_MODEL_TEXT" : "VERTEX_MODEL_MULTIMODAL"],
       DEFAULT_VERTEX_CHAIN,
     );
   }
-  return kind === "text"
-    ? parseChain(process.env["GEMINI_MODEL_TEXT"], DEFAULT_TEXT_CHAIN)
-    : parseChain(process.env["GEMINI_MODEL_MULTIMODAL"], DEFAULT_MULTIMODAL_CHAIN);
+  if (kind === "text") return parseChain(process.env["GEMINI_MODEL_TEXT"], DEFAULT_TEXT_CHAIN);
+  if (kind === "light") return parseChain(process.env["GEMINI_MODEL_LIGHT"], DEFAULT_LIGHT_CHAIN);
+  return parseChain(process.env["GEMINI_MODEL_MULTIMODAL"], DEFAULT_MULTIMODAL_CHAIN);
 }
 
 // --- Google backend selection -------------------------------------------------
@@ -199,7 +210,7 @@ interface CallOpts {
   /** Explicit model chain. Otherwise the chain for `kind` is used. */
   models?: string[];
   /** Which default chain to walk when `models` is omitted. */
-  kind?: "text" | "multimodal";
+  kind?: "text" | "multimodal" | "light";
   parts: Part[];
   system?: string;
   schema?: unknown;
@@ -680,6 +691,9 @@ ${input.content.slice(0, 200_000)}`,
     outputLanguage: string;
   }): Promise<{ front: string; back: string }[]> {
     const raw = await callGemini({
+      kind: "light",
+      noThinking: true,
+      timeoutMs: 60_000,
       system: STUDY_SYSTEM,
       schema: {
         type: "object",
@@ -714,6 +728,9 @@ ${input.content.slice(0, 200_000)}`,
     }[]
   > {
     const raw = await callGemini({
+      kind: "light",
+      noThinking: true,
+      timeoutMs: 60_000,
       system: STUDY_SYSTEM,
       schema: {
         type: "object",

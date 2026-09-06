@@ -20,12 +20,15 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-const TEXT_CHAIN = [
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
+// Translation is a mechanical rewrite, not a reasoning task: a lite model does
+// it well, in a fraction of the time, and spends the *large* free-tier bucket
+// instead of the tiny gemini-3.6-flash one (~20/day). Lite-first.
+const TRANSLATE_CHAIN = [
+  "gemini-flash-lite-latest",
   "gemini-3.5-flash-lite",
   "gemini-flash-latest",
-  "gemini-flash-lite-latest",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
 ];
 
 // Human-readable target-language names for the prompt.
@@ -119,7 +122,11 @@ async function callGemini(
         contents: [{ role: "user", parts: opts.parts }],
         generationConfig: {
           temperature: opts.temperature ?? 0.3,
-          ...(dropThinking ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
+          // Lite models don't "think" and 400 on thinkingConfig — only send it
+          // to the thinking-capable flash models (to force thinking OFF there).
+          ...(dropThinking || /lite/i.test(model)
+            ? {}
+            : { thinkingConfig: { thinkingBudget: 0 } }),
           ...(opts.schema
             ? { responseMimeType: "application/json", responseSchema: opts.schema }
             : {}),
@@ -154,13 +161,17 @@ async function callGemini(
         if (/User location is not supported|FAILED_PRECONDITION/i.test(text)) {
           throw new GeminiError("geo_blocked", "Google bloque l'API Gemini pour cette région.");
         }
-        if (res.status === 400 && !dropThinking) {
-          // Some models reject thinkingConfig — retry once without it.
+        if (/api[_ ]?key|API_KEY_INVALID/i.test(text) || res.status === 401 || res.status === 403) {
+          throw new GeminiError("auth", `Requête Gemini refusée (${res.status}): ${text.slice(0, 200)}`);
+        }
+        if (res.status === 400 && !dropThinking && !/lite/i.test(model)) {
+          // Some flash models reject thinkingConfig — retry once without it.
           dropThinking = true;
           return attempt();
         }
-        if (res.status === 400 || res.status === 401 || res.status === 403) {
-          throw new GeminiError("auth", `Requête Gemini refusée (${res.status}): ${text.slice(0, 200)}`);
+        if (res.status === 400) {
+          // Model-specific rejection (schema quirk, arg) — let the chain move on.
+          throw new GeminiError("model_unavailable", `Requête refusée par "${model}".`);
         }
         throw new GeminiError("upstream", `Erreur Gemini ${res.status}.`);
       } catch (e) {
@@ -231,26 +242,30 @@ async function translateNote(
   note: any,
 ) {
   const raw = await callGemini(key, {
-    models: TEXT_CHAIN,
+    models: TRANSLATE_CHAIN,
     schema: noteSchema,
     temperature: 0.2,
-    timeoutMs: 90_000,
-    totalBudgetMs: 150_000,
+    timeoutMs: 60_000,
+    totalBudgetMs: 120_000,
     system:
       "You are a professional academic translator. You translate study notes faithfully and fluently, keeping every fact, number, name and formula identical. You never add, remove or reorder items. You output valid JSON only, matching the given schema exactly.",
     parts: [
       {
-        text: `Translate every human-readable string value in the JSON below into ${langName(
-          language,
-        )}.
+        // Static rules + the note JSON come first and are identical across
+        // target languages, so Gemini's implicit context cache is reused when
+        // the same note is translated into a second language.
+        text: `Translate every human-readable string value in the study-note JSON below.
 Rules:
 - Keep the exact same JSON structure, the same keys, and the same number of array items.
 - Translate values only, never the keys.
 - Keep proper nouns, acronyms, numbers, dates and formulas unchanged.
-- Natural, fluent ${langName(language)} suitable for a student.
+- Natural, fluent wording suitable for a student.
 
 --- JSON ---
-${JSON.stringify(note)}`,
+${JSON.stringify(note)}
+
+--- TARGET LANGUAGE ---
+Translate every value into ${langName(language)}. Output the translated JSON only.`,
       },
     ],
   });
@@ -272,15 +287,15 @@ async function translateTranscript(
   fullText: string,
 ) {
   const out = await callGemini(key, {
-    models: TEXT_CHAIN,
+    models: TRANSLATE_CHAIN,
     temperature: 0.2,
-    timeoutMs: 110_000,
-    totalBudgetMs: 170_000,
+    timeoutMs: 90_000,
+    totalBudgetMs: 150_000,
     system:
       "You are a professional translator. You translate transcripts and extracted documents faithfully, keeping meaning, structure and layout.",
     parts: [
       {
-        text: `Translate the text below into ${langName(language)}.
+        text: `Translate the text below.
 Rules:
 - Keep every [mm:ss] timestamp exactly where it is.
 - Preserve markdown headings, lists and tables.
@@ -288,7 +303,10 @@ Rules:
 - Output the translation only, nothing else.
 
 --- TEXT ---
-${fullText.slice(0, 120_000)}`,
+${fullText.slice(0, 120_000)}
+
+--- TARGET LANGUAGE ---
+Translate the text above into ${langName(language)}.`,
       },
     ],
   });
@@ -337,33 +355,37 @@ async function run(
     { kind: "transcript", has: !!transcript.trim() },
   ];
 
-  for (const { kind, has } of kinds) {
-    if (!has) continue;
-    if (wantKinds && !wantKinds.includes(kind)) continue;
+  const todo = kinds.filter(
+    ({ kind, has }) => has && (!wantKinds || wantKinds.includes(kind)),
+  );
 
-    // Claim / (re)create the row as pending so the client sees progress.
-    await supabase.from("content_translations").upsert(
-      {
-        user_id: src.user_id,
-        source_id: sourceId,
-        kind,
-        language,
-        status: "pending",
-        error_message: null,
-      },
-      { onConflict: "source_id,kind,language" },
-    );
+  // Note + transcript are independent Gemini calls — run them concurrently.
+  await Promise.all(
+    todo.map(async ({ kind }) => {
+      // Claim / (re)create the row as pending so the client sees progress.
+      await supabase.from("content_translations").upsert(
+        {
+          user_id: src.user_id,
+          source_id: sourceId,
+          kind,
+          language,
+          status: "pending",
+          error_message: null,
+        },
+        { onConflict: "source_id,kind,language" },
+      );
 
-    try {
-      if (kind === "note") await translateNote(supabase, key, sourceId, language, note);
-      else await translateTranscript(supabase, key, sourceId, language, transcript);
-      await supabase
-        .from("usage_events")
-        .insert({ user_id: src.user_id, kind: "translation", amount: 1 });
-    } catch (e) {
-      await markFailed(supabase, sourceId, language, kind, e);
-    }
-  }
+      try {
+        if (kind === "note") await translateNote(supabase, key, sourceId, language, note);
+        else await translateTranscript(supabase, key, sourceId, language, transcript);
+        await supabase
+          .from("usage_events")
+          .insert({ user_id: src.user_id, kind: "translation", amount: 1 });
+      } catch (e) {
+        await markFailed(supabase, sourceId, language, kind, e);
+      }
+    }),
+  );
 }
 
 Deno.serve(async (req) => {

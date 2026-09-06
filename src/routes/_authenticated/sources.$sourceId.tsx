@@ -163,7 +163,7 @@ function SourcePage() {
     queryFn: () => fetchTranslations(sourceId, viewLang),
     enabled: translated,
     refetchInterval: (q) =>
-      (q.state.data ?? []).some((r) => r.status === "pending") ? 3000 : false,
+      (q.state.data ?? []).some((r) => r.status === "pending") ? 2000 : false,
   });
 
   const translateMutation = useMutation({
