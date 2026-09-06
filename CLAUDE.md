@@ -266,6 +266,44 @@ a static export — a static build would break every Gemini-backed feature.
     note under "Redeploy after a code change" above; still ask/expect the
     user may need to run it themselves if it does get blocked).
 
+- **2026-09-06 — Gemini quota optimisation + faster translation.**
+  Edge functions `translate-source` (v2), `translate-study`, `process-source`
+  **redeployed** (via `npx supabase functions deploy … --no-verify-jwt` — the
+  CLI works from the agent; Docker not needed for deploy). **Worker code
+  changed too (`pipeline.server.ts`, `gemini.server.ts`) → needs
+  `bun run build && node scripts/patch-placement.mjs && npx nitro deploy
+  --prebuilt`** (build + patch already run by the agent; user runs the
+  deploy). Changes:
+  1. **Translation now uses a lite-first model chain** (`TRANSLATE_CHAIN` =
+     `flash-lite-latest, 3.5-flash-lite, flash-latest, 3.5-flash, 3.6-flash`)
+     instead of `TEXT_CHAIN` (3.6-flash first). Translation is a mechanical
+     rewrite — lite does it well, faster, and spends the *large* free bucket
+     instead of the ~20/day `gemini-3.6-flash` one (kept for notes/chat).
+  2. **`thinkingConfig` only sent to non-`lite` models** in all edge fns.
+     The lite models 400 on it → every translation call was wasting one
+     round-trip on the retry-without-thinking path.
+  3. **`process-source` regression fixed**: it had lost `thinkingBudget: 0`,
+     so the notes step ran the 3.6-flash *thinking* model (slow + quota
+     heavy). Re-added for non-lite models, with the drop-on-400 retry.
+  4. **Same-language shortcut** (`pipeline.server.ts`): if the note /
+     transcript / flashcards / quiz was already generated in the requested
+     language (`study_notes.language` / `transcripts.language` /
+     `flashcards.language` / `quizzes.language` === target), the "translation"
+     row is filled verbatim from the source — **zero Gemini calls**. Covers
+     the common case where the display language == the generation language.
+  5. **`translate-source` translates note + transcript concurrently**
+     (`Promise.all`) instead of sequentially.
+  6. **Translation prompts put the target language last** so the static
+     rules + content prefix is identical across languages → Gemini implicit
+     context cache is reused when the same fiche is translated into a 2nd
+     language.
+  7. **Flashcards / quiz *generation*** (`gemini.server.ts` `generateFlashcards`
+     / `generateQuiz`) now use `kind: "light"` (new `DEFAULT_LIGHT_CHAIN`,
+     `GEMINI_MODEL_LIGHT` override) + `noThinking` — mechanical task, lite is
+     plenty and much faster.
+  8. Translation polling in `review.tsx` / `quizzes.$quizId.tsx` /
+     `sources.$sourceId.tsx` dropped 3s → 2s (Supabase reads, negligible).
+
 ### RLS audit result (2026-09-03) — Study Genius tables are clean
 
 Audited the 14 `public.*` tables from `supabase/migrations/*` against the live
