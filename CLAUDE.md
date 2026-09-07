@@ -425,9 +425,14 @@ Ne s'applique pas aux simples questions ou explorations.
   override). Defaults: text = `3.6-flash, 3.5-flash, 3.5-flash-lite,
   flash-latest, flash-lite-latest` (quality first); multimodal =
   `3.5-flash-lite, flash-lite-latest, flash-latest, 3.5-flash, 3.6-flash`
-  (speed first). `callGemini` walks the chain on 429, 404, 5xx, per-attempt
-  timeout, network error, **or any leftover 400** (treated as model-specific
-  → try next model). Only 401/403 / API_KEY_INVALID short-circuit.
+  (speed first). Since 2026-09-06 there's also a 3rd chain `kind: "light"`
+  (`GEMINI_MODEL_LIGHT` override, default = same lite-first list as
+  multimodal) used by `generateFlashcards` / `generateQuiz` + all
+  translation (mechanical tasks — lite is enough and spares the ~20/day
+  3.6-flash bucket). `callGemini` walks the chain on 429, 404, 5xx,
+  per-attempt timeout, network error, **or any leftover 400** (treated as
+  model-specific → try next model). Only 401/403 / API_KEY_INVALID
+  short-circuit.
 - **Timeouts / speed (2026-09-04).** Every Gemini `fetch` has an
   `AbortController` timeout (`CallOpts.timeoutMs`, default 70s) plus an
   overall chain budget (`totalBudgetMs`, default 150s). `callGemini` skips a
