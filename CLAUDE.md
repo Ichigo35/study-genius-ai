@@ -266,14 +266,12 @@ a static export — a static build would break every Gemini-backed feature.
     note under "Redeploy after a code change" above; still ask/expect the
     user may need to run it themselves if it does get blocked).
 
-- **2026-09-06 — Gemini quota optimisation + faster translation.**
+- **2026-09-06 — Gemini quota optimisation + faster translation. LIVE**
+  (Worker version `83ce7382-a10e-40c1-9cd4-954a546d3d58`, deployed
+  2026-09-07 by the user via `! npx nitro deploy --prebuilt`).
   Edge functions `translate-source` (v2), `translate-study`, `process-source`
   **redeployed** (via `npx supabase functions deploy … --no-verify-jwt` — the
-  CLI works from the agent; Docker not needed for deploy). **Worker code
-  changed too (`pipeline.server.ts`, `gemini.server.ts`) → needs
-  `bun run build && node scripts/patch-placement.mjs && npx nitro deploy
-  --prebuilt`** (build + patch already run by the agent; user runs the
-  deploy). Changes:
+  CLI works from the agent; Docker not needed for deploy). Changes:
   1. **Translation now uses a lite-first model chain** (`TRANSLATE_CHAIN` =
      `flash-lite-latest, 3.5-flash-lite, flash-latest, 3.5-flash, 3.6-flash`)
      instead of `TEXT_CHAIN` (3.6-flash first). Translation is a mechanical
